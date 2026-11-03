@@ -104,23 +104,20 @@ class LocalOperatorInteractionTests(unittest.TestCase):
     def test_uncertain_review_refresh_has_no_automatic_replay(self):
         answers=iter(['1','1','1','1','Human checked imaginary citation','YES'])
         outputs=[]
-        console=LocalOperatorConsole(self.core,read=lambda prompt: next(answers),
-                                      write=outputs.append)
-        with patch.object(console.operator.workflow,'open',
-                          side_effect=RuntimeError('Lost refresh')):
-            # Select matter also uses open, so inject failure only after display.
-            original=console.operator.select_matter
-            def select_then_fail(*args,**kwargs):
-                result=original(*args,**kwargs)
-                console.operator.workflow.open.side_effect=RuntimeError('Lost refresh')
-                return result
-            console.operator.select_matter=select_then_fail
-            # original calls workflow.open, which has already been patched;
-            # don't depend on this injection technique for separate acceptance.
-            console.operator.workflow.open.side_effect=None
-            console.run(self.reviewer)
-        self.assertIn('COMMITTED, READINESS UNRESOLVED', '\n'.join(outputs))
+        console=LocalOperatorConsole(self.core,write=outputs.append)
+        def read(prompt):
+            response=next(answers)
+            if prompt.startswith('Type YES'):
+                console.operator.workflow.open=lambda *args,**kw: (
+                    _ for _ in ()).throw(RuntimeError('Lost local readiness refresh'))
+            return response
+        console.read=read
+        console.run(self.reviewer)
+        self.assertIn('COMMITTED, READINESS UNRESOLVED', '\\n'.join(outputs))
         self.assertEqual(self.count('source_second_review'),1)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.second_source_review'"
+        ).fetchone()[0],1)
 
     def test_invalid_selection_fails_without_write(self):
         output=self.go(self.reviewer,['1','1','nan','0'])
