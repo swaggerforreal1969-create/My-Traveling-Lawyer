@@ -267,4 +267,36 @@ class HTTPReadinessTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     LoopbackReadinessServer(self.core,idle_seconds=seconds)
 
+    def test_32_malformed_request_line_has_empty_no_store_error(self):
+        ticket = self.ticket()
+        bad = b'NOT_A_REQUEST\r\nHost: localhost\r\n\r\n'
+        reply = self._pipelined_reply(bad, self._wire_get(ticket))
+        self.assertEqual(1, reply.count(b'HTTP/1.1 '))
+        self.assertIn(b' 400 ', reply)
+        self.assertIn(b'Cache-Control: no-store', reply)
+        self.assertIn(b'Content-Length: 0', reply)
+        self.assertIn(b'Connection: close', reply)
+        self.assertNotIn(b'<html', reply.lower())
+        self.assertEqual(200, self.send(ticket=ticket)[0])
+
+    def test_33_oversized_request_line_cannot_expose_error_page(self):
+        ticket=self.ticket()
+        bad=b'GET /'+b'x'*70000+b' HTTP/1.1\r\nHost: localhost\r\n\r\n'
+        reply=self._pipelined_reply(bad, self._wire_get(ticket))
+        self.assertIn(b' 414 ', reply)
+        self.assertIn(b'Content-Length: 0', reply)
+        self.assertIn(b'Cache-Control: no-store', reply)
+        self.assertNotIn(b'<html', reply.lower())
+        self.assertEqual(200,self.send(ticket=ticket)[0])
+
+    def test_34_unsupported_http_version_is_empty_denial(self):
+        ticket=self.ticket()
+        bad=self._wire_get(ticket).replace(b'HTTP/1.1',b'HTTP/9.9',1)
+        reply=self._pipelined_reply(bad,b'')
+        self.assertIn(b' 505 ', reply)
+        self.assertIn(b'Content-Length: 0', reply)
+        self.assertIn(b'Connection: close', reply)
+        self.assertNotIn(b'<html', reply.lower())
+        self.assertEqual(200,self.send(ticket=ticket)[0])
+
 if __name__=='__main__':unittest.main()
