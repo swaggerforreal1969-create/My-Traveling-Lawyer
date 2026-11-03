@@ -44,6 +44,14 @@ def reconcile_task(core, token, matter_id, task_id, expected_version):
         completed = row['completed']
         if type(version) is not int or type(completed) is not int or completed not in (0, 1):
             raise Invalid('Invalid stored task state')
+        # Require the task-specific completion event as well as a coherent
+        # audit chain. This remains only local evidence, not independent custody.
+        matching = core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action=? AND target=?",
+            ('task.complete', task_id)).fetchone()[0]
+        if ((completed == 1 and matching != 1)
+                or (completed == 0 and matching != 0)):
+            raise Invalid('Task state and local completion audit disagree')
         if completed == 1 and version == expected_version + 1:
             status = 'observed_completed'
         elif completed == 0 and version == expected_version:
