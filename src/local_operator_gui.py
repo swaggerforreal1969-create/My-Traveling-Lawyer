@@ -271,12 +271,14 @@ def launch_gui(core, token):
         try:
             result=controller.review(review_list.curselection()[0], choice.get(),
                                      human_note, True)
-            status.set(result.message)
             note.delete('1.0','end')
-            if result.status == 'review_committed': display_counts()
+            if result.status == 'review_committed':
+                display_counts()
             else:
                 review_list.delete(0,'end')
                 task_list.delete(0,'end')
+            status.set(result.message)
+            update_controls()
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Review rejected: stale, unauthorized or invalid; no retry.')
             review_list.delete(0,'end')
@@ -289,11 +291,13 @@ def launch_gui(core, token):
             return
         try:
             result=controller.complete(task_list.curselection()[0], True)
-            status.set(result.message)
-            if result.status != 'committed_refresh_unresolved': display_counts()
+            if result.status != 'committed_refresh_unresolved':
+                display_counts()
             else:
                 task_list.delete(0,'end')
                 review_list.delete(0,'end')
+            status.set(result.message)
+            update_controls()
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Task rejected: unauthorized or stale. Reopen read-only.')
             task_list.delete(0,'end')
@@ -303,8 +307,10 @@ def launch_gui(core, token):
             result=controller.reconcile_last_review()
             display_counts()
             status.set(result.message)
+            update_controls()
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Read-only recovery unresolved. Do NOT repeat the write.')
+            update_controls()
 
     select_button = ttk.Button(buttons,text='Select matter',command=select_matter)
     refresh_button = ttk.Button(buttons,text='Refresh',command=display_counts)
