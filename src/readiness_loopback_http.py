@@ -51,7 +51,11 @@ class LoopbackReadinessHandler(BaseHTTPRequestHandler):
         return
 
     def _deny(self, status=403):
+        # Never parse bytes following a rejected request as a new authorized
+        # request. The request might contain an unread body or pipelined data.
+        self.close_connection = True
         self.send_response(status)
+        self.send_header('Connection', 'close')
         for key, value in _DENIAL_HEADERS:
             self.send_header(key, value)
         self.send_header('Content-Length', '0')
@@ -109,7 +113,10 @@ class LoopbackReadinessHandler(BaseHTTPRequestHandler):
         except Exception:
             # Fail closed; never leak exception class, matter existence or source data.
             return self._deny()
+        # One authorized preview per connection; no ambient keep-alive state.
+        self.close_connection = True
         self.send_response(200)
+        self.send_header('Connection', 'close')
         for key, value in preview.headers:
             self.send_header(key, value)
         self.end_headers()
