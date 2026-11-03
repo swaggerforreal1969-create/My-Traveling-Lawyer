@@ -95,6 +95,38 @@ class TaskReconciliationTests(unittest.TestCase):
         ).fetchone()[0], 1)
         self.assertTrue(self.core.verify_audit())
 
+    def test_missing_completion_audit_is_denied_even_if_remaining_chain_valid(self):
+        self.core.complete_task(self.token, self.tid, 1)
+        self.core.db.execute("DELETE FROM audit_chain WHERE action='task.complete' AND target=?",
+                             (self.tid,))
+        self.assertTrue(self.core.verify_audit())
+        with self.assertRaises(Invalid):
+            self.observe()
+
+    def test_forged_completed_flag_without_completion_audit_is_denied(self):
+        self.core.db.execute('UPDATE tasks SET completed=1, version=2 WHERE id=?',
+                             (self.tid,))
+        self.assertTrue(self.core.verify_audit())
+        with self.assertRaises(Invalid):
+            self.observe()
+
+    def test_forged_completion_audit_for_still_open_task_is_denied(self):
+        # Append a locally well-formed audit record while leaving task open.
+        self.core._audit(self.owner, 'task.complete', self.tid)
+        self.assertTrue(self.core.verify_audit())
+        with self.assertRaises(Invalid):
+            self.observe()
+
+    def test_completion_audit_for_other_task_does_not_authorize_this_one(self):
+        other = self.core.create_task(self.token, self.mid, 'Other fictional task',
+                                      '2026-10-01T00:00:00+00:00')
+        self.core.complete_task(self.token, other['id'], 1)
+        self.core.db.execute('UPDATE tasks SET completed=1,version=2 WHERE id=?',
+                             (self.tid,))
+        self.assertTrue(self.core.verify_audit())
+        with self.assertRaises(Invalid):
+            self.observe()
+
     def test_no_bool_versions(self):
         with self.assertRaises(Invalid):
             self.observe(version=True)
