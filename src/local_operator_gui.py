@@ -14,6 +14,7 @@ from .private_attorney_operator import PrivateAttorneyOperator
 from .secure_engine import SecureCore, Denied, Invalid, Stale
 from .research_evidence import EvidenceInvalid
 from .attorney_research_workflow import RefreshUnresolved
+from .durable_local_write_fence import LocalWriteFence
 
 
 @dataclass(frozen=True)
@@ -26,8 +27,9 @@ class ActionFeedback:
 class LocalOperatorController:
     """UI-independent state boundary; no credentials sent to a web client."""
 
-    def __init__(self, core, token):
+    def __init__(self, core, token, *, durable_fence=None):
         self.operator = PrivateAttorneyOperator(core)
+        self._durable_fence = durable_fence
         self._token = token
         self._matter_id = None
         self._matters = ()
@@ -36,6 +38,9 @@ class LocalOperatorController:
         self._recovery = None
 
     def _assert_no_uncertain_review(self):
+        if self._durable_fence is not None and self._durable_fence.is_pending():
+            self._tasks, self._reviews = (), ()
+            raise Denied('A write is unresolved. No new write permitted')
         if self._recovery is not None:
             self._tasks, self._reviews = (), ()
             raise Invalid('Resolve pending review using read-only reconciliation first')
@@ -81,7 +86,8 @@ class LocalOperatorController:
             queue = self.operator.reviewer_inbox(self._token, mid)
             reviews = tuple((item['evidence_id'], item['observation_id'])
                             for item in queue['items'])
-        if self._recovery is not None:
+        if (self._recovery is not None or
+                (self._durable_fence is not None and self._durable_fence.is_pending())):
             # Refresh is allowed for observational purposes only. Pending
             # uncertainty must never repopulate actionable row selections.
             self._tasks, self._reviews = (), ()
@@ -109,6 +115,8 @@ class LocalOperatorController:
         if not isinstance(note, str) or not 15 <= len(note.strip()) <= 1200:
             raise Invalid('Human review note must be 15–1200 characters')
         eid, oid = self._reviews[position]
+        if self._durable_fence is not None:
+            self._durable_fence.begin()  # persisted BEFORE the write
         self._recovery = None
         try:
             committed = self.operator.decide_review(self._token, self._matter_id,
@@ -133,6 +141,8 @@ class LocalOperatorController:
             return ActionFeedback(
                 'committed_refresh_unresolved',
                 'Review committed, display refresh unresolved. Do NOT repeat.')
+        if self._durable_fence is not None:
+            self._durable_fence.finish_confirmed()
         return ActionFeedback('review_committed', 'Review recorded. Readiness refreshed.')
 
     def complete(self, position, confirmed):
@@ -142,6 +152,8 @@ class LocalOperatorController:
         if type(position) is not int or not 0 <= position < len(self._tasks):
             raise Invalid('Invalid task selection')
         task_id, version = self._tasks[position]
+        if self._durable_fence is not None:
+            self._durable_fence.begin()  # persisted BEFORE the write
         self._recovery = None
         result = self.operator.complete_task(
             self._token, self._matter_id, task_id, version)
@@ -155,7 +167,9 @@ class LocalOperatorController:
             raise Invalid('Unrecognized completion state')
         if result.status == 'committed_refresh_unresolved':
             self._tasks, self._reviews = (), ()
-            return ActionFeedback(result.status, allowed[result.status])
+            if self._durable_fence is not None:
+            self._durable_fence.finish_confirmed()
+        return ActionFeedback(result.status, allowed[result.status])
         try:
             self.refresh()
         except Exception:
@@ -183,6 +197,8 @@ class LocalOperatorController:
                 'reconciliation_unresolved',
                 'Review reconciliation unresolved. Do NOT repeat the write.')
         self._recovery = None
+        if self._durable_fence is not None:
+            self._durable_fence.finish_confirmed()
         try:
             self.refresh()
         except Exception:
@@ -199,7 +215,9 @@ def launch_gui(core, token, *, run_mainloop=True):
     """Real Tk controls. Disabled write buttons until a current row selected."""
     import tkinter as tk
     from tkinter import ttk, messagebox
-    controller = LocalOperatorController(core, token)
+    db_path = core.db.execute('PRAGMA database_list').fetchone()['file']
+    controller = LocalOperatorController(
+        core, token, durable_fence=LocalWriteFence(db_path) if db_path else None)
     root = tk.Tk()
     root.title('Private Attorney — Local Operator')
     root.geometry('760x650')
