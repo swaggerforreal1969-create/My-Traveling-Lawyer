@@ -130,6 +130,8 @@ class LocalOperatorController:
         except (Denied, Invalid, Stale, EvidenceInvalid):
             self._tasks, self._reviews = (), ()
             raise
+        if self._durable_fence is not None:
+            self._durable_fence.finish_confirmed()
         try:
             self.refresh()
         except Exception:
@@ -141,8 +143,6 @@ class LocalOperatorController:
             return ActionFeedback(
                 'committed_refresh_unresolved',
                 'Review committed, display refresh unresolved. Do NOT repeat.')
-        if self._durable_fence is not None:
-            self._durable_fence.finish_confirmed()
         return ActionFeedback('review_committed', 'Review recorded. Readiness refreshed.')
 
     def complete(self, position, confirmed):
@@ -153,8 +153,9 @@ class LocalOperatorController:
             raise Invalid('Invalid task selection')
         task_id, version = self._tasks[position]
         if self._durable_fence is not None:
-            self._durable_fence.begin()  # persisted BEFORE the write
+            self._durable_fence.begin()  # committed BEFORE the real write
         self._recovery = None
+        # Any exception, ambiguous outcome, or crash leaves the fence pending.
         result = self.operator.complete_task(
             self._token, self._matter_id, task_id, version)
         allowed = {
@@ -167,9 +168,9 @@ class LocalOperatorController:
             raise Invalid('Unrecognized completion state')
         if result.status == 'committed_refresh_unresolved':
             self._tasks, self._reviews = (), ()
-            if self._durable_fence is not None:
+            return ActionFeedback(result.status, allowed[result.status])
+        if self._durable_fence is not None:
             self._durable_fence.finish_confirmed()
-        return ActionFeedback(result.status, allowed[result.status])
         try:
             self.refresh()
         except Exception:
