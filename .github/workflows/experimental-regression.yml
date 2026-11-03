@@ -62,6 +62,10 @@ jobs:
         run: |
           python -m py_compile src/second_source_review.py tests/test_cross_process_review.py
           python -m unittest discover -s tests -p 'test_cross_process_review.py' -q
+      - name: Confidential inbox review action acceptance
+        run: |
+          python -m py_compile src/attorney_research_workflow.py tests/test_review_inbox_action.py
+          python -m unittest discover -s tests -p 'test_review_inbox_action.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
