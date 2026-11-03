@@ -242,6 +242,61 @@ class DurableLocalWriteFenceTests(unittest.TestCase):
             LocalWriteFence(self.path).begin()
         self.assertEqual(self.count('task.complete'),0)
 
+    def test_stale_cas_cannot_clear_newer_reservation(self):
+        old=self.fence.begin()
+        self.assertEqual(old,LocalWriteFence(self.path).pending_reservation())
+        self.fence.finish_confirmed(expected_reservation=old)
+        current=LocalWriteFence(self.path).begin()
+        self.assertNotEqual(old,current)
+        with self.assertRaises(Denied):
+            self.fence.finish_confirmed(expected_reservation=old)
+        self.assertTrue(self.fence.is_pending())
+        self.assertEqual(self.fence.pending_reservation(),current)
+        self.fence.finish_confirmed(expected_reservation=current)
+        self.assertFalse(self.fence.is_pending())
+        self.assertEqual(self.count('task.complete'),0)
+
+    def test_empty_or_forged_reservation_never_clears_hold(self):
+        held=self.fence.begin()
+        for value in (None, '', '0'*64, 'X'*64, held[:-1]):
+            with self.subTest(value=value):
+                with self.assertRaises(Denied):
+                    self.fence.finish_confirmed(expected_reservation=value)
+                self.assertEqual(self.fence.pending_reservation(),held)
+        self.assertEqual(self.count('task.complete'),0)
+
+    def test_recovery_does_not_clear_reservation_swapped_after_proof(self):
+        with patch.object(self.client.operator.workflow,'open',
+                          side_effect=RuntimeError('Postcommit refresh lost')):
+            outcome=self.client.review(0,'corroborated_manually',
+                'Fictional reviewer verified independently',True)
+        self.assertEqual(outcome.status,'committed_refresh_unresolved')
+        original=self.client.operator.reconcile_research
+        new_ids=[]
+        def concurrent_switch(*args,**kwargs):
+            proof=original(*args,**kwargs)
+            prior=self.fence.pending_reservation()
+            self.fence.finish_confirmed(expected_reservation=prior)
+            new_ids.append(LocalWriteFence(self.path).begin())
+            return proof
+        with patch.object(self.client.operator,'reconcile_research',
+                          side_effect=concurrent_switch):
+            with self.assertRaises(Denied):
+                self.client.reconcile_last_review()
+        self.assertEqual(self.fence.pending_reservation(),new_ids[0])
+        self.assertEqual(self.count('research.second_source_review'),1)
+        self.assertEqual(self.count('task.complete'),0)
+
+    def test_missing_reservation_version_requires_incident_handling(self):
+        held=self.fence.begin()
+        with sqlite3.connect(str(self.fence.path)) as db:
+            db.execute("UPDATE fence SET reservation=NULL WHERE slot=1")
+        with self.assertRaises(Denied):
+            LocalWriteFence(self.path).pending_reservation()
+        with self.assertRaises(Denied):
+            self.fence.finish_confirmed(expected_reservation=held)
+        self.assertTrue(self.fence.is_pending())
+
     def test_unresolved_recovery_never_auto_clears(self):
         from types import SimpleNamespace
         with patch.object(self.client.operator.workflow,'open',
