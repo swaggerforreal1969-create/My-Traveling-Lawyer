@@ -174,4 +174,36 @@ class HTTPReadinessTests(unittest.TestCase):
         self.assertEqual(403, self.send(ticket=first_ticket)[0])
         self.assertEqual(200, self.send(ticket=second_ticket)[0])
 
+    def test_26_unimplemented_methods_reject_without_consuming_ticket(self):
+        t=self.ticket()
+        for method in ('PATCH','TRACE','CONNECT'):
+            with self.subTest(method=method):
+                code,headers,body=self.send(method=method,ticket=t)
+                self.assertEqual(405, code)
+                self.assertEqual(b'', body)
+                self.assertEqual('close',headers.get('Connection'))
+        self.assertEqual(200,self.send(ticket=t)[0])
+
+    def test_27_http_10_rejected_without_consuming_ticket(self):
+        t=self.ticket()
+        request=self._wire_get(t).replace(b'HTTP/1.1',b'HTTP/1.0',1)
+        reply=self._pipelined_reply(request,b'')
+        self.assertIn(b' 403 ',reply)
+        self.assertIn(b'Connection: close',reply)
+        self.assertEqual(200,self.send(ticket=t)[0])
+
+    def test_28_simultaneous_http_requests_consume_only_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        t=self.ticket()
+        barrier=Barrier(6)
+        def request(_):
+            barrier.wait(timeout=5)
+            return self.send(ticket=t)[0]
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            codes=list(pool.map(request,range(6)))
+        self.assertEqual(1,codes.count(200))
+        self.assertEqual(5,codes.count(403))
+        self.assertEqual(403,self.send(ticket=t)[0])
+
 if __name__=='__main__':unittest.main()
