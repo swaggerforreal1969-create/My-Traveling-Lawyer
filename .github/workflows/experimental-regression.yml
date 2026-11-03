@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - engineering/**
+  pull_request:
+    branches:
+      - engineering/real-research-task-journey-20261103
   workflow_dispatch:
 permissions:
   contents: read
@@ -35,6 +38,55 @@ jobs:
           python -m py_compile src/attorney_research_workflow.py tests/test_attorney_research_workflow.py tests/test_real_attorney_research_journey.py
           python -m unittest discover -s tests -p 'test_attorney_research_workflow.py' -q
           python -m unittest discover -s tests -p 'test_real_attorney_research_journey.py' -q
+      - name: Fast read-only task reconciliation acceptance
+        run: |
+          python -m py_compile src/task_reconciliation.py tests/test_task_reconciliation.py
+          python -m unittest discover -s tests -p 'test_task_reconciliation.py' -q
+      - name: Fast private completion preflight acceptance
+        run: |
+          python -m py_compile src/task_completion_preflight.py tests/test_task_completion_preflight.py
+          python -m unittest discover -s tests -p 'test_task_completion_preflight.py' -q
+      - name: Fast atomic attorney operator task action acceptance
+        run: |
+          python -m py_compile src/attorney_research_workflow.py tests/test_task_operator_action.py
+          python -m unittest discover -s tests -p 'test_task_operator_action.py' -q
+      - name: Fast actor-scoped research write recovery acceptance
+        run: |
+          python -m py_compile src/research_write_recovery.py tests/test_research_write_recovery.py
+          python -m unittest discover -s tests -p 'test_research_write_recovery.py' -q
+      - name: Fast confidential second-review queue acceptance
+        run: |
+          python -m py_compile src/attorney_research_workflow.py tests/test_private_review_queue.py
+          python -m unittest discover -s tests -p 'test_private_review_queue.py' -q
+      - name: Cross-process independent reviewer acceptance
+        run: |
+          python -m py_compile src/second_source_review.py tests/test_cross_process_review.py
+          python -m unittest discover -s tests -p 'test_cross_process_review.py' -q
+      - name: Confidential inbox review action acceptance
+        run: |
+          python -m py_compile src/attorney_research_workflow.py tests/test_review_inbox_action.py
+          python -m unittest discover -s tests -p 'test_review_inbox_action.py' -q
+      - name: Private attorney operator complete journey acceptance
+        run: |
+          python -m py_compile src/private_attorney_operator.py tests/test_private_attorney_operator.py
+          python -m unittest discover -s tests -p 'test_private_attorney_operator.py' -q
+      - name: Accessible confidential operator document acceptance
+        run: |
+          python -m py_compile src/private_operator_document.py tests/test_accessible_private_operator.py
+          python -m unittest discover -s tests -p 'test_accessible_private_operator.py' -q
+      - name: Keyboard-driven local attorney operator acceptance
+        run: |
+          python -m py_compile src/local_operator_cli.py tests/test_local_operator_cli.py
+          python -m unittest discover -s tests -p 'test_local_operator_cli.py' -q
+      - name: Local graphical operator controller acceptance (headless)
+        run: |
+          python -m py_compile src/local_operator_gui.py tests/test_local_operator_gui.py
+          python -m unittest discover -s tests -p 'test_local_operator_gui.py' -q
+      - name: Native Tk graphical acceptance on preinstalled virtual display
+        run: |
+          command -v xvfb-run
+          python -m py_compile src/local_operator_gui.py tests/test_native_tk_operator.py
+          xvfb-run -a python -m unittest discover -s tests -p 'test_native_tk_operator.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
@@ -97,4 +149,21 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q src tests
       - name: Full Linux regression
+        run: python -m unittest discover -s tests -q
+
+  diagnostic-regression:
+    # Non-release-only execution. MUST NOT substitute for the strict 42-file
+    # source and immutable-manifest checks in the required test job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned test dependency
+        run: python -m pip install --disable-pip-version-check "cryptography==46.0.4"
+      - name: Compile currently published Python sources
+        run: python -m compileall -q src tests
+      - name: Diagnostic full published-tree regression (not release acceptance)
         run: python -m unittest discover -s tests -q
