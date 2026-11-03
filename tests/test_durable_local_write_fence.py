@@ -118,6 +118,98 @@ class DurableLocalWriteFenceTests(unittest.TestCase):
         self.assertFalse(self.fence.is_pending())
         self.assertEqual(self.count('task.complete'),1)
 
+    def test_actor_recovers_review_identity_after_full_controller_restart(self):
+        with patch.object(self.client.operator.workflow,'open',
+                          side_effect=RuntimeError('Postcommit window lost')):
+            reply=self.client.review(0,'corroborated_manually',
+                'Fictional human reviewer inspected offline record',True)
+        self.assertEqual(reply.status,'committed_refresh_unresolved')
+        self.assertTrue(self.fence.is_pending())
+        fresh=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        fresh.list_matters()
+        fresh.select(0)
+        self.assertEqual(fresh.counts(),(0,0))
+        self.assertTrue(fresh.has_recovery())
+        recovered=fresh.reconcile_last_review()
+        self.assertEqual(recovered.status,'observed_local_commit')
+        self.assertIn('after restart',recovered.message)
+        self.assertFalse(LocalWriteFence(self.path).is_pending())
+        self.assertEqual(self.count('research.second_source_review'),1)
+        self.assertEqual(fresh.complete(0,True).status,'completed_and_refreshed')
+        self.assertEqual(self.count('research.second_source_review'),1)
+        self.assertEqual(self.count('task.complete'),1)
+
+    def test_crash_before_write_does_not_invent_review_commit(self):
+        with self.core.lock:
+            actor=self.core._identity(self.editor)
+            seq=self.core.db.execute(
+                'SELECT COALESCE(MAX(seq),0) FROM audit_chain').fetchone()[0]
+        oid=self.client._reviews[0][1]
+        self.fence.begin(
+            review_identity=(actor['id'],self.mid,self.eid,oid),
+            audit_before=seq)
+        fresh=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        fresh.list_matters()
+        fresh.select(0)
+        reply=fresh.reconcile_last_review()
+        self.assertEqual(reply.status,'reconciliation_unresolved')
+        self.assertTrue(self.fence.is_pending())
+        self.assertEqual(self.count('research.second_source_review'),0)
+        with self.assertRaises(Denied):
+            fresh.complete(0,True)
+
+    def test_restarted_recovery_requires_current_credentials(self):
+        with patch.object(self.client.operator.workflow,'open',
+                          side_effect=RuntimeError('Lost refresh')):
+            self.client.review(0,'corroborated_manually',
+                    'Fictional human reviewer inspected record',True)
+        self.core.revoke_token(self.editor)
+        fresh=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        with self.assertRaises(Denied):
+            fresh.list_matters()
+        self.assertTrue(self.fence.is_pending())
+        self.assertEqual(self.count('research.second_source_review'),1)
+
+    def test_wrong_firm_and_wrong_account_cannot_reconcile(self):
+        with patch.object(self.client.operator.workflow,'open',
+                          side_effect=RuntimeError('Lost refresh')):
+            self.client.review(0,'corroborated_manually',
+                    'Fictional human reviewer inspected record',True)
+        other_firm=self.core.provision_firm('Unrelated Fictional Firm')
+        _,outsider=self.core.provision_user(other_firm,'Outsider')
+        outside=LocalOperatorController(
+            self.core,outsider,durable_fence=LocalWriteFence(self.path))
+        self.assertEqual(outside.list_matters(),0)
+        with self.assertRaises(Invalid):outside.select(0)
+        with self.assertRaises(Invalid):outside.reconcile_last_review()
+        # A different user in the same matter cannot adopt another review.
+        author=LocalOperatorController(
+            self.core,self.author,durable_fence=LocalWriteFence(self.path))
+        author.list_matters()
+        author.select(0)
+        self.assertEqual(author.reconcile_last_review().status,
+                         'reconciliation_unresolved')
+        self.assertTrue(self.fence.is_pending())
+
+    def test_modified_pending_fingerprint_never_unfences(self):
+        with patch.object(self.client.operator.workflow,'open',
+                          side_effect=RuntimeError('Lost refresh')):
+            self.client.review(0,'corroborated_manually',
+                    'Fictional human reviewer inspected record',True)
+        with sqlite3.connect(str(self.fence.path)) as db:
+            db.execute("UPDATE fence SET fingerprint=? WHERE slot=1",('f'*64,))
+        fresh=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        fresh.list_matters()
+        fresh.select(0)
+        self.assertEqual(fresh.reconcile_last_review().status,
+                         'reconciliation_unresolved')
+        self.assertTrue(self.fence.is_pending())
+        self.assertEqual(self.count('research.second_source_review'),1)
+
     def test_unresolved_recovery_never_auto_clears(self):
         from types import SimpleNamespace
         with patch.object(self.client.operator.workflow,'open',
