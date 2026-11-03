@@ -1,5 +1,6 @@
 """SQLite cross-process review acceptance with real SecureCore and fictional data."""
 import multiprocessing as mp
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,6 +31,25 @@ def _review_worker(path, token, matter, evidence, observation, start, ready, out
             outcome.put('unexpected:' + type(exc).__name__)
     finally:
         core.close()
+
+
+def _crash_review_worker(path, token, matter, evidence, observation, phase):
+    """Test-only child intentionally exits without an acknowledgment."""
+    core = SecureCore(path)
+    review = SecondSourceReview(core)
+    if phase == 'precommit':
+        def crash_before_audit(actor, action, target):
+            if action == 'research.second_source_review':
+                os._exit(37)
+            return original_audit(actor, action, target)
+        original_audit = core._audit
+        core._audit = crash_before_audit
+    review.record(token, matter, evidence, observation,
+                  'corroborated_manually',
+                  'Fictional second human review with process crash')
+    if phase == 'postcommit':
+        os._exit(38)
+    os._exit(39)
 
 
 class CrossProcessReviewTests(unittest.TestCase):
@@ -128,6 +148,53 @@ class CrossProcessReviewTests(unittest.TestCase):
             'corroborated_manually','Fictional retry after known aborted transaction')
         self.assertEqual(self.count(), 1)
         self.assertEqual(self.audit_count(), 1)
+
+
+    def run_crash(self, phase, expected_exit):
+        ctx = mp.get_context('spawn')
+        worker = ctx.Process(target=_crash_review_worker, args=(
+            str(self.path), self.r1, self.mid, self.eid, self.oid, phase))
+        worker.start()
+        try:
+            worker.join(timeout=20)
+            self.assertFalse(worker.is_alive(), 'Review child timed out')
+            self.assertEqual(worker.exitcode, expected_exit)
+        finally:
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+
+    def test_sigexit_before_audit_rolls_back_insert_and_allows_review(self):
+        self.run_crash('precommit', 37)
+        self.assertEqual(self.count(), 0)
+        self.assertEqual(self.audit_count(), 0)
+        self.assertTrue(self.core.verify_audit())
+        self.reviews.record(self.r2, self.mid, self.eid, self.oid,
+            'corroborated_manually', 'Fictional review after confirmed rollback')
+        self.assertEqual(self.count(), 1)
+        self.assertEqual(self.audit_count(), 1)
+        self.assertTrue(self.core.verify_audit())
+
+    def test_lost_ack_after_commit_persists_single_review_and_audit(self):
+        self.run_crash('postcommit', 38)
+        self.assertEqual(self.count(), 1)
+        self.assertEqual(self.audit_count(), 1)
+        self.assertTrue(self.core.verify_audit())
+        # Read-only reconciliation after acknowledgment loss: no write replay.
+        from src.research_write_recovery import reconcile_research_write
+        row = self.core.db.execute(
+            'SELECT id FROM source_second_review WHERE matter_id=?',
+            (self.mid,)).fetchone()
+        observed = reconcile_research_write(
+            self.core, self.r1, self.mid, 'source.second_review', row['id'])
+        self.assertEqual(observed.status, 'observed_local_commit')
+        self.assertFalse(observed.independent_audit_verified)
+        with self.assertRaises(EvidenceInvalid):
+            self.reviews.record(self.r2, self.mid, self.eid, self.oid,
+                'corroborated_manually', 'Duplicate after uncertain acknowledgment')
+        self.assertEqual(self.count(), 1)
+        self.assertEqual(self.audit_count(), 1)
+
 
 
 if __name__ == '__main__':
