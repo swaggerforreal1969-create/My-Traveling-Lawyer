@@ -418,7 +418,7 @@ def launch_gui(core, token, *, run_mainloop=True):
             existing = portfolio_text.get('1.0', 'end-1c')
             if existing.startswith('PRIVATE ATTORNEY MATTER PORTFOLIO'):
                 if current != existing:
-                    clear_portfolio()
+                    clear_all_visible_work()
                     portfolio_text.configure(state='normal')
                     portfolio_text.insert('1.0', current)
                     portfolio_text.configure(state='disabled')
@@ -435,15 +435,17 @@ def launch_gui(core, token, *, run_mainloop=True):
         privacy_check()
         root.after(2000, privacy_tick)
 
-    def privacy_focus_out(event):
+    def privacy_window_hidden(event):
+        # Toplevel unmapping/minimizing invalidates the visible session.
+        # Ordinary focus changes among child controls must NOT clear data.
         if event.widget is root:
             clear_all_visible_work()
-            status.set('Private work hidden when window loses focus.')
+            status.set('Private work hidden while window is not visible.')
 
     # Exposed solely for deterministic native GUI acceptance without waiting
     # on wall-clock timers. Every invocation performs real backend checking.
     root.privacy_check = privacy_check
-    root.bind('<FocusOut>', privacy_focus_out, add='+')
+    root.bind('<Unmap>', privacy_window_hidden, add='+')
     root.after(2000, privacy_tick)
 
     def refresh_lists():
