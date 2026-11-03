@@ -1,5 +1,6 @@
 """Real socket-based integration tests; only fictional local SQLite data."""
 import http.client
+import socket
 import threading
 import tempfile
 from pathlib import Path
@@ -121,5 +122,56 @@ class HTTPReadinessTests(unittest.TestCase):
         h.extend(('X-Extra-%02d'%i,'v') for i in range(35))
         self.assertEqual(403,self.raw_request(h)[0])
         self.assertEqual(200,self.send(ticket=ticket)[0])
+
+    def _pipelined_reply(self, first, second):
+        # Raw on-wire test: an invalid request may include unread bytes that
+        # resemble a second authenticated HTTP message. Connection must close.
+        with socket.create_connection(('127.0.0.1', self.server.server_address[1]), timeout=4) as sock:
+            sock.settimeout(4)
+            sock.sendall(first + second)
+            parts = []
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                parts.append(chunk)
+        return b''.join(parts)
+
+    def _wire_get(self, ticket, path=None):
+        path = path or self.url()
+        port = self.server.server_address[1]
+        return (f'GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n'
+                f'Authorization: Bearer {self.token}\r\n'
+                f'X-Preview-Ticket: {ticket}\r\n\r\n').encode()
+
+    def test_23_duplicate_header_pipeline_closes_without_consuming(self):
+        ticket = self.ticket()
+        first = self._wire_get(ticket).replace(b'\r\n\r\n', b'\r\nauthorization: Bearer invalid\r\n\r\n')
+        reply = self._pipelined_reply(first, self._wire_get(ticket))
+        self.assertEqual(1, reply.count(b'HTTP/1.1 '))
+        self.assertIn(b'HTTP/1.1 403', reply)
+        self.assertIn(b'Connection: close', reply)
+        self.assertNotIn(b'Private matter readiness', reply)
+        self.assertEqual(200, self.send(ticket=ticket)[0])
+
+    def test_24_post_body_pipeline_closes_without_consuming(self):
+        ticket = self.ticket()
+        first = (f'POST {self.url()} HTTP/1.1\r\nHost: 127.0.0.1:{self.server.server_address[1]}\r\n'
+                 'Content-Length: 16\r\n\r\n1234567890123456').encode()
+        reply = self._pipelined_reply(first, self._wire_get(ticket))
+        self.assertEqual(1, reply.count(b'HTTP/1.1 '))
+        self.assertIn(b'HTTP/1.1 405', reply)
+        self.assertIn(b'Connection: close', reply)
+        self.assertEqual(200, self.send(ticket=ticket)[0])
+
+    def test_25_success_connection_closes_after_one_preview(self):
+        first_ticket, second_ticket = self.ticket(), self.ticket()
+        reply = self._pipelined_reply(self._wire_get(first_ticket), self._wire_get(second_ticket))
+        self.assertEqual(1, reply.count(b'HTTP/1.1 '))
+        self.assertIn(b'HTTP/1.1 200', reply)
+        self.assertIn(b'Connection: close', reply)
+        self.assertIn(b'Private matter readiness', reply)
+        self.assertEqual(403, self.send(ticket=first_ticket)[0])
+        self.assertEqual(200, self.send(ticket=second_ticket)[0])
 
 if __name__=='__main__':unittest.main()
