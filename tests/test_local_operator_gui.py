@@ -210,6 +210,46 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.assertEqual(confirmed.status,'observed_local_commit')
         self.assertEqual(self.audit_count('research.second_source_review'),1)
 
+    def test_reviewer_queue_denial_after_task_read_clears_all_actions(self):
+        cl=self.select()
+        self.assertEqual(cl.counts(),(1,1))
+        # The task view succeeds; subsequent independent reviewer query fails.
+        with patch.object(cl.operator,'reviewer_inbox',
+                          side_effect=Denied('Revoked during refresh')):
+            with self.assertRaises(Denied):
+                cl.refresh()
+        self.assertEqual(cl.counts(),(0,0))
+        with self.assertRaises(Invalid):
+            cl.complete(0,True)
+        with self.assertRaises(Invalid):
+            cl.review(0,'corroborated_manually',
+                      'Fictional reviewer note is long enough',True)
+        self.assertEqual(self.audit_count('task.complete'),0)
+        self.assertEqual(self.audit_count('research.second_source_review'),0)
+
+    def test_revoked_session_invalidates_stale_matter_selection(self):
+        cl=self.select()
+        self.core.revoke_token(self.reviewer)
+        with self.assertRaises(Denied):
+            cl.list_matters()
+        self.assertEqual(cl._matters,())
+        self.assertEqual(cl.counts(),(0,0))
+        with self.assertRaises(Invalid):
+            cl.select(0)
+        self.assertEqual(self.audit_count('task.complete'),0)
+
+    def test_failed_matter_switch_never_retains_prior_action_ids(self):
+        cl=self.select()
+        self.assertEqual(cl.counts(),(1,1))
+        with patch.object(cl.operator,'select_matter',
+                          side_effect=Denied('Matter permission changed')):
+            with self.assertRaises(Denied):
+                cl.select(0)
+        self.assertEqual(cl.counts(),(0,0))
+        with self.assertRaises(Invalid):
+            cl.complete(0,True)
+        self.assertEqual(self.audit_count('task.complete'),0)
+
     def test_second_refresh_failure_after_committed_task_never_retries(self):
         cl=self.select()
         with patch.object(cl,'refresh',side_effect=RuntimeError('Local window refresh failed')):
