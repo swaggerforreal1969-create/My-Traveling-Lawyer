@@ -68,7 +68,7 @@ def capture_fictional_windows(destination):
                 subprocess.run([capture_tool, "-window", str(root.winfo_id()),
                                 str(out)], check=True, timeout=20, capture_output=True)
                 data = out.read_bytes()
-                if not data.startswith(b"\\x89PNG\\r\\n\\x1a\\n") or len(data) < 1024:
+                if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) < 1024:
                     raise RuntimeError("Screenshot missing or not a valid PNG")
                 records.append({"file": out.name, "width": w, "height": h,
                      "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
@@ -81,7 +81,7 @@ def capture_fictional_windows(destination):
         "captures": records, "human_visual_verified": False,
         "screen_reader_verified": False, "production_approved": False}
     (folder / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if len(records) != 3:
         raise RuntimeError("Three graphical screenshot captures required")
     print("SYNTHETIC TK SCREENSHOTS: 3 valid PNGs; screenshots are not visual certification")
