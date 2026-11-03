@@ -206,4 +206,65 @@ class HTTPReadinessTests(unittest.TestCase):
         self.assertEqual(5,codes.count(403))
         self.assertEqual(403,self.send(ticket=t)[0])
 
+    def test_29_capacity_saturation_fails_closed_without_using_ticket(self):
+        import time
+        # Replace the normal fixture server with a one-slot private server.
+        small=LoopbackReadinessServer(self.core, max_connections=1, idle_seconds=2)
+        thread=threading.Thread(target=small.serve_forever,daemon=True)
+        thread.start()
+        held=socket.create_connection(('127.0.0.1',small.server_address[1]),timeout=4)
+        held.sendall(b'GET /v1/matters/unfinished HTTP/1.1\r\nHost: ')
+        try:
+            # Wait for the worker to claim its only slot, without racing accept().
+            deadline=time.monotonic()+2
+            while small._slots._value and time.monotonic()<deadline:
+                time.sleep(0.01)
+            self.assertEqual(0,small._slots._value)
+            t=small.issue_ticket(self.token,self.mid)['ticket']
+            with socket.create_connection(('127.0.0.1',small.server_address[1]),timeout=3) as sock:
+                sock.settimeout(3)
+                sock.sendall(self._wire_get(t))
+                self.assertEqual(b'',sock.recv(4096))
+            held.close()
+            deadline=time.monotonic()+3
+            while small._slots._value==0 and time.monotonic()<deadline:
+                time.sleep(0.01)
+            self.assertEqual(1,small._slots._value)
+            con=http.client.HTTPConnection('127.0.0.1',small.server_address[1],timeout=3)
+            con.request('GET',self.url(),headers={'Authorization':'Bearer '+self.token,
+                         'X-Preview-Ticket':t})
+            response=con.getresponse()
+            self.assertEqual(200,response.status)
+            response.read();con.close()
+        finally:
+            held.close();small.shutdown();small.server_close();thread.join(timeout=3)
+
+    def test_30_idle_connection_times_out_releasing_capacity(self):
+        import time
+        small=LoopbackReadinessServer(self.core, max_connections=1, idle_seconds=0.5)
+        thread=threading.Thread(target=small.serve_forever,daemon=True);thread.start()
+        sock=socket.create_connection(('127.0.0.1',small.server_address[1]),timeout=3)
+        sock.settimeout(3)
+        sock.sendall(b'GET /v1/matters/incomplete HTTP/1.1\r\n')
+        try:
+            deadline=time.monotonic()+2
+            while small._slots._value and time.monotonic()<deadline:time.sleep(0.01)
+            self.assertEqual(0,small._slots._value)
+            deadline=time.monotonic()+3
+            while small._slots._value==0 and time.monotonic()<deadline:time.sleep(0.02)
+            self.assertEqual(1,small._slots._value)
+            self.assertEqual(b'',sock.recv(2048))
+        finally:
+            sock.close();small.shutdown();small.server_close();thread.join(timeout=3)
+
+    def test_31_unsafe_resource_limits_cannot_be_configured(self):
+        for n in (0,17,True,-1):
+            with self.subTest(capacity=n):
+                with self.assertRaises(ValueError):
+                    LoopbackReadinessServer(self.core,max_connections=n)
+        for seconds in (0,0.2,6,True):
+            with self.subTest(timeout=seconds):
+                with self.assertRaises(ValueError):
+                    LoopbackReadinessServer(self.core,idle_seconds=seconds)
+
 if __name__=='__main__':unittest.main()
