@@ -197,6 +197,51 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(self.listboxes[2].size(), 0)
         self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
 
+    def test_invalid_review_note_focuses_input_before_any_confirm(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[1].selection_set(0)
+        self.listboxes[1].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        self.assertEqual(str(self.buttons['Record review'].cget('state')), 'normal')
+        with patch.object(messagebox, 'askyesno') as confirm:
+            self.buttons['Record review'].invoke()
+        confirm.assert_not_called()
+        self.assertEqual(self.root.focus_get(), self.texts[0])
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 0)
+
+    def test_keyboard_only_review_requires_user_confirmation(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[1].selection_set(0)
+        self.listboxes[1].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        self.texts[0].insert('1.0', 'Human reviewer checked fictional evidence manually')
+        self.root.focus_force()
+        self.root.update()
+        with patch.object(messagebox, 'askyesno', return_value=False) as confirm:
+            self.root.event_generate('<Alt-v>')
+            self.root.update()
+        self.assertEqual(confirm.call_count, 1)
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 0)
+
+    def test_keyboard_only_task_shortcut_requires_user_confirmation(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        self.root.focus_force()
+        self.root.update()
+        with patch.object(messagebox, 'askyesno', return_value=False) as confirm:
+            self.root.event_generate('<Alt-k>')
+            self.root.update()
+        self.assertEqual(confirm.call_count, 1)
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM tasks WHERE completed=1').fetchone()[0], 0)
+
     def test_reviewer_viewer_native_action_control_disabled(self):
         self.open(self.viewer)
         self.select_matter()
