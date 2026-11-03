@@ -158,6 +158,38 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(self.texts[1].get('1.0', 'end-1c'), '')
         self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
 
+    def test_idle_revocation_removes_uncommitted_private_review_draft(self):
+        self.open()
+        self.select_matter()
+        self.texts[0].insert('1.0', 'CONFIDENTIAL FICTIONAL HUMAN REVIEW DRAFT')
+        self.core.revoke_token(self.reviewer)
+        self.root.privacy_check()
+        self.assertEqual(self.texts[0].get('1.0', 'end-1c'), '')
+        self.assertTrue(all(w.size() == 0 for w in self.listboxes))
+        self.assertEqual(str(self.buttons['Record review'].cget('state')), 'disabled')
+
+    def test_private_draft_purged_on_portfolio_navigation(self):
+        self.open()
+        self.select_matter()
+        self.texts[0].insert('1.0', 'PRIVATE FICTIONAL DRAFT NEVER SUBMITTED')
+        before = self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0]
+        self.buttons['Workload (read only)'].invoke()
+        self.assertEqual(self.texts[0].get('1.0', 'end-1c'), '')
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], before)
+
+    def test_hidden_window_draft_purge_keeps_no_write(self):
+        self.open()
+        self.select_matter()
+        self.texts[0].insert('1.0', 'PRIVATE FICTIONAL DRAFT')
+        self.root.withdraw()
+        self.root.update()
+        self.assertEqual(self.texts[0].get('1.0', 'end-1c'), '')
+        self.assertTrue(all(w.size() == 0 for w in self.listboxes))
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 0)
+
     def test_alt_p_keyboard_shortcut_opens_portfolio(self):
         self.open()
         self.root.focus_force()

@@ -381,6 +381,10 @@ def launch_gui(core, token, *, run_mainloop=True):
         portfolio_text.configure(state='disabled')
 
     def clear_all_visible_work():
+        # A human review draft is private even before it is committed.
+        # Never retain it through logout, revoked access, failed refresh,
+        # navigation to the portfolio, or a hidden/minimized window.
+        note.delete('1.0', 'end')
         clear_portfolio()
         matter_list.delete(0, 'end')
         review_list.delete(0, 'end')
@@ -493,6 +497,8 @@ def launch_gui(core, token, *, run_mainloop=True):
         update_controls()
 
     def clear_stale_actions():
+        note.delete('1.0', 'end')
+        clear_portfolio()
         # Reject stale on-screen selections after any denied action. A user's
         # next attempt must begin with a separately authorized refresh.
         review_list.delete(0, 'end')
