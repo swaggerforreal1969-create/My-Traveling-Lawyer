@@ -83,6 +83,9 @@ class LocalOperatorController:
     def counts(self):
         return (len(self._tasks), len(self._reviews))
 
+    def has_recovery(self):
+        return self._recovery is not None
+
     def review(self, position, decision, note, confirmed):
         if not confirmed:
             return ActionFeedback('cancelled', 'Cancelled; no write performed.')
@@ -206,6 +209,15 @@ def launch_gui(core, token):
     buttons = ttk.Frame(actions)
     buttons.pack(fill='x',pady=8)
 
+    def update_controls():
+        # The GUI has no authority of its own; this only prevents misleading
+        # clicks. Every operation still reauthorizes in the backend.
+        select_button.configure(state='normal' if matter_list.curselection() else 'disabled')
+        refresh_button.configure(state='normal' if controller._matter_id is not None else 'disabled')
+        review_button.configure(state='normal' if review_list.curselection() else 'disabled')
+        task_button.configure(state='normal' if task_list.curselection() else 'disabled')
+        recovery_button.configure(state='normal' if controller.has_recovery() else 'disabled')
+
     def refresh_lists():
         try:
             number = controller.list_matters()
@@ -215,9 +227,11 @@ def launch_gui(core, token):
             review_list.delete(0,'end')
             task_list.delete(0,'end')
             status.set('Select a matter. No client names or IDs shown.')
+            matter_list.focus_set()
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Access denied or state changed. Close and reauthenticate.')
             matter_list.delete(0,'end')
+        update_controls()
 
     def select_matter():
         if not matter_list.curselection():
@@ -229,6 +243,7 @@ def launch_gui(core, token):
             status.set('Matter access denied. Reauthenticate before continuing.')
             review_list.delete(0,'end')
             task_list.delete(0,'end')
+        update_controls()
 
     def display_counts():
         try:
@@ -244,6 +259,7 @@ def launch_gui(core, token):
             status.set('Authorization or state changed. Reauthenticate.')
             task_list.delete(0,'end')
             review_list.delete(0,'end')
+        update_controls()
 
     def submit_review():
         if not review_list.curselection(): return
@@ -290,12 +306,31 @@ def launch_gui(core, token):
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Read-only recovery unresolved. Do NOT repeat the write.')
 
-    ttk.Button(buttons,text='Select matter',command=select_matter).pack(side='left',padx=3)
-    ttk.Button(buttons,text='Refresh',command=display_counts).pack(side='left',padx=3)
-    ttk.Button(buttons,text='Record review',command=submit_review).pack(side='left',padx=3)
-    ttk.Button(buttons,text='Complete task',command=submit_task).pack(side='left',padx=3)
-    ttk.Button(buttons,text='Recover review',command=recover).pack(side='left',padx=3)
+    select_button = ttk.Button(buttons,text='Select matter',command=select_matter)
+    refresh_button = ttk.Button(buttons,text='Refresh',command=display_counts)
+    review_button = ttk.Button(buttons,text='Record review',command=submit_review)
+    task_button = ttk.Button(buttons,text='Complete task',command=submit_task)
+    recovery_button = ttk.Button(buttons,text='Recover review',command=recover)
+    for button in (select_button, refresh_button, review_button,
+                   task_button, recovery_button):
+        button.pack(side='left',padx=3)
+    # Standard Tab and arrow navigation remain intact. Named keyboard
+    # shortcuts offer direct access without inventing active web controls.
+    ttk.Label(outer, text='Keyboard: Alt+M matter, Alt+R reviews, '
+              'Alt+T tasks, Alt+N review note, Alt+F refresh.',
+              wraplength=670).pack(anchor='w')
+    matter_list.bind('<<ListboxSelect>>', lambda event: update_controls())
+    review_list.bind('<<ListboxSelect>>', lambda event: update_controls())
+    task_list.bind('<<ListboxSelect>>', lambda event: update_controls())
+    root.bind('<Alt-m>', lambda event: matter_list.focus_set())
+    root.bind('<Alt-r>', lambda event: review_list.focus_set())
+    root.bind('<Alt-t>', lambda event: task_list.focus_set())
+    root.bind('<Alt-n>', lambda event: note.focus_set())
+    root.bind('<Alt-f>', lambda event: display_counts()
+              if str(refresh_button.cget('state')) != 'disabled' else None)
+    matter_list.bind('<Return>', lambda event: select_matter())
     refresh_lists()
+    update_controls()
     root.mainloop()
 
 
