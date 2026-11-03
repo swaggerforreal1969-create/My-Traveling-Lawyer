@@ -18,11 +18,9 @@ from .attorney_research_workflow import RefreshUnresolved
 
 @dataclass(frozen=True)
 class ActionFeedback:
+    """Safe UI-facing feedback; custody IDs remain inside the controller."""
     status: str
     message: str
-    # Not displayed; only for one manually requested read-only recovery.
-    recovery_operation: str = ''
-    recovery_id: str = ''
 
 
 class LocalOperatorController:
@@ -105,8 +103,7 @@ class LocalOperatorController:
                 self._recovery = (uncertain.operation, uncertain.record_id)
             self._tasks, self._reviews = (), ()
             return ActionFeedback('committed_refresh_unresolved',
-                                  'Review committed, display refresh unresolved. Do NOT repeat.',
-                                  uncertain.operation, uncertain.record_id or '')
+                                  'Review committed, display refresh unresolved. Do NOT repeat.')
         except (Denied, Invalid, Stale, EvidenceInvalid):
             self._tasks, self._reviews = (), ()
             raise
@@ -186,7 +183,7 @@ def launch_gui(core, token, *, run_mainloop=True):
     ttk.Label(outer, textvariable=status, wraplength=660).pack(anchor='w')
     panels = ttk.Frame(outer)
     panels.pack(fill='both', expand=True, pady=10)
-    panels.columnconfigure((0,1,2), weight=1)
+    panels.columnconfigure((0,1,2), weight=1, uniform='private-work')
     panels.rowconfigure(1,weight=1)
     ttk.Label(panels,text='Authorized matters').grid(row=0,column=0,sticky='w')
     ttk.Label(panels,text='Second-human reviews').grid(row=0,column=1,sticky='w')
@@ -207,7 +204,8 @@ def launch_gui(core, token, *, run_mainloop=True):
     note = tk.Text(actions,height=3,wrap='word')
     note.pack(fill='x')
     buttons = ttk.Frame(actions)
-    buttons.pack(fill='x',pady=8)
+    buttons.pack(fill='x', pady=8)
+    buttons.columnconfigure((0, 1, 2), weight=1)
 
     def update_controls():
         # The GUI has no authority of its own; this only prevents misleading
@@ -317,9 +315,11 @@ def launch_gui(core, token, *, run_mainloop=True):
     review_button = ttk.Button(buttons,text='Record review',command=submit_review)
     task_button = ttk.Button(buttons,text='Complete task',command=submit_task)
     recovery_button = ttk.Button(buttons,text='Recover review',command=recover)
-    for button in (select_button, refresh_button, review_button,
-                   task_button, recovery_button):
-        button.pack(side='left',padx=3)
+    # Two rows preserve button reachability at the minimum 580px window.
+    # Each button stays in tab order; no horizontal scrolling is needed.
+    for i, button in enumerate((select_button, refresh_button, review_button,
+                                task_button, recovery_button)):
+        button.grid(row=i // 3, column=i % 3, sticky='ew', padx=3, pady=3)
     # Standard Tab and arrow navigation remain intact. Named keyboard
     # shortcuts offer direct access without inventing active web controls.
     ttk.Label(outer, text='Keyboard: Alt+M matter, Alt+R reviews, '
