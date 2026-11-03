@@ -14,13 +14,15 @@ from .source_observation import SourceObservation
 from .second_source_review import SecondSourceReview
 from .task_reconciliation import reconcile_task
 from .task_completion_preflight import prepare_completion
+from .research_write_recovery import reconcile_research_write
 
 
 class RefreshUnresolved(RuntimeError):
     """A committed write succeeded; read-only refresh failed. Never replay write."""
 
-    def __init__(self, operation):
+    def __init__(self, operation, record_id=None):
         self.operation = operation
+        self.record_id = record_id
         super().__init__('Post-write readiness refresh unresolved; re-open read-only')
 
 
@@ -62,7 +64,7 @@ class AttorneyResearchWorkflow:
         except Exception as exc:
             # The delegated service has returned successfully; the write was
             # committed. Do not return a response suggesting it may be retried.
-            raise RefreshUnresolved(operation) from exc
+            raise RefreshUnresolved(operation, record_id) from exc
         return WorkflowResult(operation, record_id, snapshot)
 
     def add_source(self, token, matter_id, title, url, excerpt, *, now=None):
@@ -76,6 +78,10 @@ class AttorneyResearchWorkflow:
     def second_review(self, token, matter_id, evidence_id, observation_id, decision, note, *, now=None):
         result = self.reviews.record(token, matter_id, evidence_id, observation_id, decision, note)
         return self._after_commit('source.second_review', result['review_id'], token, matter_id, now=now)
+
+    def reconcile_research(self, token, matter_id, operation, record_id):
+        """Read-only, actor-specific local recovery of one research write."""
+        return reconcile_research_write(self.core, token, matter_id, operation, record_id)
 
     def reconcile_completion(self, token, matter_id, task_id, expected_version):
         """Read-only recovery: no automatic retry after uncertain completion."""
