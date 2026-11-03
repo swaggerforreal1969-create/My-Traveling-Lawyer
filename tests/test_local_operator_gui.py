@@ -151,6 +151,27 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.assertEqual(self.audit_count('research.second_source_review'),1)
         self.assertTrue(self.core.verify_audit())
 
+    def test_postcommit_feedback_keeps_custody_id_internal(self):
+        cl=self.select()
+        original=cl.operator.workflow.open
+        cl.operator.workflow.open=lambda *args,**kwargs: (
+            _ for _ in ()).throw(RuntimeError('Intentional readiness failure'))
+        try:
+            outcome=cl.review(0,'corroborated_manually',
+                'Second human reviewed fictional confidential source',True)
+        finally:
+            cl.operator.workflow.open=original
+        self.assertEqual(outcome.status,'committed_refresh_unresolved')
+        self.assertTrue(cl.has_recovery())
+        self.assertFalse(hasattr(outcome,'recovery_id'))
+        self.assertFalse(hasattr(outcome,'recovery_operation'))
+        self.assertNotIn(cl._recovery[1],str(outcome))
+        self.assertNotIn(self.eid,str(outcome))
+        self.assertNotIn(self.mid,str(outcome))
+        self.assertEqual(self.audit_count('research.second_source_review'),1)
+        self.assertEqual(cl.reconcile_last_review().status,'observed_local_commit')
+        self.assertEqual(self.audit_count('research.second_source_review'),1)
+
     def test_second_refresh_failure_after_committed_task_never_retries(self):
         cl=self.select()
         with patch.object(cl,'refresh',side_effect=RuntimeError('Local window refresh failed')):
