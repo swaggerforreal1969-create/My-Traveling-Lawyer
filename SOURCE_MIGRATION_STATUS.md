@@ -56,3 +56,11 @@ The **local** full suite completed: `python -m unittest discover -s tests -q` ->
 Never treat local 292/292 passing as a GitHub CI pass.
 Never claim complete source migration, real WebAuthn, verified legal citations, or live 24/7 hosting.
 No secrets or real client material in git.
+
+## 2026-11-03 migration increment
+- Ten original v1.4 documents have been published and verified individually: CONFIDENTIALITY_DESIGN.md, DEVICE_STEPUP_V12.md, PROGRESS.md, README_V12.md, RELEASE_V13.md, RELEASE_V14.md, ROADMAP.md, SECURITY_BOUNDARIES_V09.md, SECURITY_V10.md, SECURITY_V11.md.
+- Main and unrelated repositories were not changed.
+- Source Python/JavaScript and tests remain incomplete on GitHub; CI has no verified successful status.
+- Archive SHA-256 (local): d31e068154b735424d5eae0d2fb2da7faa9627c223f57ca0e455d23a3e44.
+- New local full-suite attempts timed out at 30s and 18s, respectively; historical 292/292 local pass is retained but NOT reproduced this cycle. Last visible verbose test before 18s timeout: test_secure_engine.AuthorizationTests.test_persistent_authorization.
+- Next required acceptance: transfer sanitized source/tests to this isolated branch, verify exact manifest and Linux CI. No real WebAuthn or production 24/7 AI is claimed.
