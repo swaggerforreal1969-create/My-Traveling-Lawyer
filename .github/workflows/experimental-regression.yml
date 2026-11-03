@@ -70,6 +70,10 @@ jobs:
         run: |
           python -m py_compile src/private_attorney_operator.py tests/test_private_attorney_operator.py
           python -m unittest discover -s tests -p 'test_private_attorney_operator.py' -q
+      - name: Accessible confidential operator document acceptance
+        run: |
+          python -m py_compile src/private_operator_document.py tests/test_accessible_private_operator.py
+          python -m unittest discover -s tests -p 'test_accessible_private_operator.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
