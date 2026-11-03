@@ -253,6 +253,71 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
             cl.complete(0,True)
         self.assertEqual(self.audit_count('task.complete'),0)
 
+    def test_pending_review_fences_refresh_matter_switch_and_all_writes(self):
+        cl=self.select()
+        with patch.object(cl.operator.workflow, 'open',
+                          side_effect=RuntimeError('Lost private refresh')):
+            result = cl.review(0, 'corroborated_manually',
+                               'Fictional second human verified source', True)
+        self.assertEqual(result.status, 'committed_refresh_unresolved')
+        self.assertTrue(cl.has_recovery())
+        self.assertEqual(self.audit_count('research.second_source_review'), 1)
+        # A read-only refresh may occur, but cannot restore actionable IDs.
+        cl.refresh()
+        self.assertEqual(cl.counts(), (0,0))
+        with self.assertRaises(Invalid):
+            cl.complete(0, True)
+        with self.assertRaises(Invalid):
+            cl.review(0, 'rejected', 'Fictional different review note', True)
+        with self.assertRaises(Invalid):
+            cl.select(0)
+        with self.assertRaises(Invalid):
+            cl.list_matters()
+        self.assertTrue(cl.has_recovery())
+        self.assertEqual(self.audit_count('task.complete'), 0)
+        self.assertEqual(self.audit_count('research.second_source_review'), 1)
+        observed=cl.reconcile_last_review()
+        self.assertEqual(observed.status, 'observed_local_commit')
+        self.assertFalse(cl.has_recovery())
+        self.assertEqual(self.audit_count('research.second_source_review'), 1)
+        self.assertEqual(cl.complete(0, True).status, 'completed_and_refreshed')
+        self.assertEqual(self.audit_count('task.complete'), 1)
+
+    def test_unresolved_read_only_reconciliation_keeps_session_fenced(self):
+        from types import SimpleNamespace
+        cl=self.select()
+        with patch.object(cl.operator.workflow, 'open',
+                          side_effect=RuntimeError('Lost private refresh')):
+            cl.review(0, 'corroborated_manually',
+                      'Fictional independently verified source', True)
+        with patch.object(cl.operator, 'reconcile_research',
+                          return_value=SimpleNamespace(status='unresolved')):
+            response=cl.reconcile_last_review()
+        self.assertEqual(response.status, 'reconciliation_unresolved')
+        with self.assertRaises(Invalid):
+            cl.list_matters()
+        with self.assertRaises(Invalid):
+            cl.complete(0, True)
+        self.assertEqual(self.audit_count('task.complete'), 0)
+        self.assertEqual(self.audit_count('research.second_source_review'), 1)
+
+    def test_revocation_during_pending_recovery_cannot_clear_fence(self):
+        cl=self.select()
+        with patch.object(cl.operator.workflow, 'open',
+                          side_effect=RuntimeError('Lost private refresh')):
+            cl.review(0, 'corroborated_manually',
+                      'Fictional independently verified source', True)
+        self.core.revoke_token(self.reviewer)
+        with self.assertRaises(Denied):
+            cl.reconcile_last_review()
+        self.assertTrue(cl.has_recovery())
+        with self.assertRaises(Invalid):
+            cl.complete(0, True)
+        with self.assertRaises(Invalid):
+            cl.select(0)
+        self.assertEqual(self.audit_count('task.complete'), 0)
+        self.assertEqual(self.audit_count('research.second_source_review'), 1)
+
     def test_second_refresh_failure_after_committed_task_never_retries(self):
         cl=self.select()
         with patch.object(cl,'refresh',side_effect=RuntimeError('Local window refresh failed')):
