@@ -87,6 +87,19 @@ jobs:
           command -v xvfb-run
           python -m py_compile src/local_operator_gui.py tests/test_native_tk_operator.py
           xvfb-run -a python -m unittest discover -s tests -p 'test_native_tk_operator.py' -q
+      - name: Capture three synthetic-only native Tk PNG screenshots
+        run: |
+          command -v xvfb-run
+          command -v import
+          python -m py_compile tests/capture_native_tk_screenshots.py
+          PYTHONPATH=. xvfb-run -a python tests/capture_native_tk_screenshots.py
+      - name: Retain synthetic-only screenshots for independent visual inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtl-fictional-native-tk-screenshots
+          path: artifacts/tk-screenshots/
+          if-no-files-found: error
+          retention-days: 7
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
