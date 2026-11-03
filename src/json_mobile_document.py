@@ -25,6 +25,20 @@ _FIELDS = {'schema', 'review_counts'} | _COUNTS | _FALSE_FLAGS
 class UnsafeReadinessDocument(ValueError):
     """Fail closed on unexpected authenticated representation."""
 
+def _unique_json_object(pairs):
+    """Reject ambiguous JSON at *every* object nesting level.
+
+    Standard json.loads silently keeps the final value on duplicate keys,
+    which can make auditing a purportedly authenticated representation
+    ambiguous. Reject before schema and legal safety checks.
+    """
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise UnsafeReadinessDocument('Duplicate JSON member')
+        out[key] = value
+    return out
+
 @dataclass(frozen=True)
 class PrivateMobileDocument:
     html: bytes
@@ -59,7 +73,9 @@ def render_authenticated_readiness(response):
             seen.get('content-length') != str(len(body))):
         raise UnsafeReadinessDocument('Authenticated response security policy missing')
     try:
-        payload = json.loads(body.decode('utf-8'), parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+        payload = json.loads(body.decode('utf-8'),
+                             object_pairs_hook=_unique_json_object,
+                             parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as e:
         raise UnsafeReadinessDocument('Invalid readiness JSON') from e
     if type(payload) is not dict or set(payload) != _FIELDS or payload.get('schema') != 'mtl.private.readiness.counts.v1':
