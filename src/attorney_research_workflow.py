@@ -12,6 +12,7 @@ from .attorney_journey import AttorneyJourney
 from .research_evidence import ResearchEvidence
 from .source_observation import SourceObservation
 from .second_source_review import SecondSourceReview
+from .task_reconciliation import reconcile_task
 
 
 class RefreshUnresolved(RuntimeError):
@@ -65,6 +66,10 @@ class AttorneyResearchWorkflow:
     def second_review(self, token, matter_id, evidence_id, observation_id, decision, note, *, now=None):
         result = self.reviews.record(token, matter_id, evidence_id, observation_id, decision, note)
         return self._after_commit('source.second_review', result['review_id'], token, matter_id, now=now)
+
+    def reconcile_completion(self, token, matter_id, task_id, expected_version):
+        """Read-only recovery: no automatic retry after uncertain completion."""
+        return reconcile_task(self.core, token, matter_id, task_id, expected_version)
 
     def complete_task(self, token, matter_id, task_id, expected_version, *, now=None):
         # Use the existing delegated task completion and post-commit refresh;
