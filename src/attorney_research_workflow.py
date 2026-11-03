@@ -119,6 +119,26 @@ class AttorneyResearchWorkflow:
                     'court_filing_approved': False,
                     'independent_audit_verified': False}
 
+    def review_from_inbox(self, token, matter_id, evidence_id, observation_id,
+                          decision, note, *, now=None):
+        """Resolve one confidential inbox item and refresh private readiness.
+
+        Inbox membership is advisory. The distinct-process SQLite admission
+        rechecks session, source freshness, duplicate signatures and audit in
+        the same BEGIN IMMEDIATE transaction. Never retry after an uncertain
+        post-write refresh.
+        """
+        with self.core.lock:
+            inbox = self.pending_second_reviews(token, matter_id)
+            if not any(item['evidence_id'] == evidence_id
+                       and item['observation_id'] == observation_id
+                       for item in inbox['items']):
+                raise EvidenceInvalid('Review item not current or not assigned')
+            result = self.reviews.record(token, matter_id, evidence_id,
+                                         observation_id, decision, note)
+        return self._after_commit('source.second_review', result['review_id'],
+                                  token, matter_id, now=now)
+
     def reconcile_research(self, token, matter_id, operation, record_id):
         """Read-only, actor-specific local recovery of one research write."""
         return reconcile_research_write(self.core, token, matter_id, operation, record_id)
