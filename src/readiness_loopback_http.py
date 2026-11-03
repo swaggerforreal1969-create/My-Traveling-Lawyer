@@ -80,6 +80,19 @@ class LoopbackReadinessHandler(BaseHTTPRequestHandler):
         # No request-target or header logging; secrets must not enter access logs.
         return
 
+    def send_error(self, code, message=None, explain=None):
+        """Parser-level failures get the same private, empty response as ACL denial.
+
+        The stdlib default produces a descriptive HTML error page before
+        do_GET can evaluate authentication. No parser-generated body or
+        request details are returned to an untrusted local client.
+        """
+        # BaseHTTPRequestHandler uses HTTP/0.9 on malformed request lines,
+        # otherwise suppressing the entire error response. Send a bounded
+        # HTTP/1.1 denial independent of the untrusted request version.
+        self.request_version = 'HTTP/1.1'
+        self._deny(code)
+
     def _deny(self, status=403):
         # Never parse bytes following a rejected request as a new authorized
         # request. The request might contain an unread body or pipelined data.
