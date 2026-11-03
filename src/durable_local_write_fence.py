@@ -21,25 +21,86 @@ class LocalWriteFence:
         path = Path(database)
         if not path.is_file():
             raise Denied('Existing local database required for durable fence')
+        self.database = path
         self.path = path.with_name(path.name + '.write-fence.sqlite3')
+        # A marker in the original local DB detects accidental sidecar removal
+        # or replacement. It is NOT independently trusted or rollback-proof.
+        # Unanchored legacy sidecars must not be silently adopted.
         try:
-            with self._connection() as db:
-                db.execute("CREATE TABLE IF NOT EXISTS fence ("
-                           "slot INTEGER PRIMARY KEY CHECK(slot=1),"
-                           "state TEXT NOT NULL CHECK(state='pending'),"
-                           "kind TEXT NOT NULL DEFAULT 'unknown',"
-                           "salt TEXT, fingerprint TEXT,"
-                           "audit_before INTEGER)")
-                existing={row[1] for row in db.execute('PRAGMA table_info(fence)')}
-                for name, sql in (
-                    ('kind', "TEXT NOT NULL DEFAULT 'unknown'"),
-                    ('salt', 'TEXT'), ('fingerprint', 'TEXT'),
-                    ('audit_before', 'INTEGER')
-                ):
-                    if name not in existing:
-                        db.execute(f'ALTER TABLE fence ADD COLUMN {name} {sql}')
+            with sqlite3.connect(str(self.database), timeout=5,
+                                 isolation_level=None) as main:
+                main.execute('PRAGMA busy_timeout=5000')
+                main.execute('BEGIN IMMEDIATE')
+                main.execute("""CREATE TABLE IF NOT EXISTS local_write_fence_anchor (
+                    slot INTEGER PRIMARY KEY CHECK(slot=1),
+                    marker TEXT NOT NULL)""")
+                row = main.execute(
+                    'SELECT marker FROM local_write_fence_anchor WHERE slot=1'
+                ).fetchone()
+                exists = self.path.is_file()
+                if row is None:
+                    if exists:
+                        raise Denied('Existing unanchored write fence requires incident review')
+                    marker=token_hex(32)
+                    main.execute(
+                        'INSERT INTO local_write_fence_anchor(slot,marker) VALUES(1,?)',
+                        (marker,))
+                else:
+                    if not exists:
+                        raise Denied('Missing write fence: all writes denied')
+                    marker=row[0]
+                with self._connection() as db:
+                    db.execute("""CREATE TABLE IF NOT EXISTS fence (
+                        slot INTEGER PRIMARY KEY CHECK(slot=1),
+                        state TEXT NOT NULL CHECK(state='pending'),
+                        kind TEXT NOT NULL DEFAULT 'unknown',
+                        salt TEXT, fingerprint TEXT,
+                        audit_before INTEGER)""")
+                    existing={entry[1] for entry in db.execute('PRAGMA table_info(fence)')}
+                    for name, sql in (
+                        ('kind', "TEXT NOT NULL DEFAULT 'unknown'"),
+                        ('salt', 'TEXT'), ('fingerprint', 'TEXT'),
+                        ('audit_before', 'INTEGER')
+                    ):
+                        if name not in existing:
+                            db.execute(f'ALTER TABLE fence ADD COLUMN {name} {sql}')
+                    db.execute("""CREATE TABLE IF NOT EXISTS fence_marker (
+                        slot INTEGER PRIMARY KEY CHECK(slot=1),
+                        marker TEXT NOT NULL)""")
+                    found=db.execute(
+                        'SELECT marker FROM fence_marker WHERE slot=1').fetchone()
+                    if found is None:
+                        if row is not None:
+                            raise Denied('Unbound existing write fence; writes denied')
+                        db.execute('INSERT INTO fence_marker(slot,marker) VALUES(1,?)',
+                                   (marker,))
+                    elif found[0]!=marker:
+                        raise Denied('Write fence binding mismatch; writes denied')
+                main.execute('COMMIT')
+        except Denied:
+            raise
         except (sqlite3.Error, OSError) as error:
             raise Denied('Local write fence unavailable; all writes denied') from error
+
+    def _verify_binding(self):
+        try:
+            if not self.path.is_file():
+                raise Denied('Missing local write fence; writes denied')
+            with sqlite3.connect(str(self.database), timeout=5) as main:
+                anchor=main.execute(
+                    'SELECT marker FROM local_write_fence_anchor WHERE slot=1'
+                ).fetchone()
+            with self._connection() as db:
+                marker=db.execute(
+                    'SELECT marker FROM fence_marker WHERE slot=1').fetchone()
+            if (anchor is None or marker is None
+                    or not isinstance(anchor[0],str)
+                    or anchor[0]!=marker[0]):
+                raise Denied('Local write fence binding invalid')
+        except Denied:
+            raise
+        except (sqlite3.Error,OSError) as error:
+            raise Denied('Cannot verify local write fence binding') from error
 
     def _connection(self):
         db = sqlite3.connect(str(self.path), timeout=5, isolation_level=None)
@@ -48,6 +109,7 @@ class LocalWriteFence:
         return db
 
     def is_pending(self):
+        self._verify_binding()
         try:
             with self._connection() as db:
                 row = db.execute('SELECT state FROM fence WHERE slot=1').fetchone()
@@ -75,6 +137,7 @@ class LocalWriteFence:
         salt = token_hex(24) if review_identity is not None else None
         fingerprint = (self._fingerprint(salt, review_identity)
                        if review_identity is not None else None)
+        self._verify_binding()
         try:
             with self._connection() as db:
                 db.execute('BEGIN IMMEDIATE')
@@ -102,6 +165,7 @@ class LocalWriteFence:
         if (not isinstance(identity,tuple) or len(identity)!=4
                 or type(audit_seq) is not int):
             raise Denied('Invalid recovery candidate')
+        self._verify_binding()
         try:
             with self._connection() as db:
                 rows=db.execute('''SELECT kind,salt,fingerprint,audit_before
@@ -126,6 +190,7 @@ class LocalWriteFence:
         A crash between commit and clearance intentionally leaves a pending
         fence. No auto-clear on reboot, timeout, startup, or uncertain result.
         """
+        self._verify_binding()
         try:
             with self._connection() as db:
                 db.execute('BEGIN IMMEDIATE')
