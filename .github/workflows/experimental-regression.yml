@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: mtl-regression-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -15,6 +18,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Fast isolated mobile renderer acceptance (source gate unchanged)
+        run: |
+          python -m py_compile src/json_mobile_document.py tests/test_json_mobile_document.py
+          python -m unittest discover -s tests -p test_json_mobile_document.py -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
