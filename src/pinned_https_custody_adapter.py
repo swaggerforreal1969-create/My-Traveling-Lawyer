@@ -6,6 +6,7 @@ provisions a service, stores secrets, redirects, retries a write, or clears a
 fence. A real provider and independent public-key pin are still required.
 """
 import hashlib
+import ipaddress
 import http.client
 import json
 import re
@@ -18,6 +19,10 @@ _HOST = re.compile(r"^[a-zA-Z0-9.-]{1,253}$")
 _PATHS = {"admit": "/v1/custody/admit",
           "read_head": "/v1/custody/head",
           "read_event": "/v1/custody/event"}
+
+
+def _reject_nonfinite(value):
+    raise ValueError('Non-finite JSON number prohibited')
 
 
 def _no_duplicates(pairs):
@@ -52,17 +57,36 @@ class PinnedHTTPSCustodyAdapter:
                 or type(timeout_seconds) not in (int,float)
                 or not 0.5 <= timeout_seconds <= 15):
             raise Denied("Custody TLS endpoint not independently configured")
-        parts=urlsplit(endpoint)
-        if (parts.scheme!="https" or not parts.hostname
+        try:
+            parts=urlsplit(endpoint)
+            host=parts.hostname
+            port=parts.port
+            if host:
+                # Reject numeric / IP-literal authorities even when not
+                # loopback: remote provider identity must be DNS+TLS pinned.
+                try:
+                    ipaddress.ip_address(host)
+                except ValueError:
+                    is_ip=False
+                else:
+                    is_ip=True
+            else:
+                is_ip=False
+        except ValueError as exc:
+            raise Denied("Invalid custody endpoint authority") from exc
+        if (parts.scheme!="https" or not host
                 or parts.username is not None or parts.password is not None
                 or parts.path not in ("", "/") or parts.query or parts.fragment
-                or parts.port not in (None,443)
-                or not _HOST.fullmatch(parts.hostname)
-                or parts.hostname.startswith(".")
-                or ".." in parts.hostname
-                or parts.hostname.lower() in ("localhost","127.0.0.1")):
+                or port not in (None,443)
+                or is_ip or not _HOST.fullmatch(host)
+                or host.startswith(".") or host.endswith(".")
+                or ".." in host or host.lower()=="localhost"
+                or host.lower().endswith((".local",".localhost",".internal"))
+                or "." not in host or host.split(".")[-1].isdigit()
+                or any(part.startswith("-") or part.endswith("-")
+                       or not part for part in host.split("."))):
             raise Denied("Custody endpoint must be a pinned HTTPS hostname")
-        self._host=parts.hostname
+        self._host=host
         self._certificate_sha256=certificate_sha256
 
     def __call__(self, operation, body):
@@ -100,19 +124,31 @@ class PinnedHTTPSCustodyAdapter:
             if response.status != 200:
                 # No redirects, credential forwarding, or disclosure of body.
                 raise Denied("Custody provider refused request")
-            length=response.getheader("Content-Length")
+            # Refuse ambiguous duplicate header interpretation and compressed
+            # or chunked replies until the provider has an approved policy.
+            fields={}
+            for name,value in response.getheaders():
+                key=name.lower()
+                if key in fields:
+                    raise Denied("Duplicated custody reply header")
+                fields[key]=value
+            if any(key in fields for key in ("content-encoding","transfer-encoding")):
+                raise Denied("Unsupported custody response encoding")
+            length=fields.get("content-length")
             if length is not None:
-                try:
-                    if int(length)<0 or int(length)>16384:
-                        raise Denied("Invalid custody reply length")
-                except ValueError as exc:
-                    raise Denied("Invalid custody reply length") from exc
-            if response.getheader("Content-Type","").split(";")[0].strip().lower()!="application/json":
-                raise Denied("Custody provider did not return JSON")
+                if not length.isascii() or not length.isdecimal():
+                    raise Denied("Invalid custody reply length")
+                if int(length)>16384:
+                    raise Denied("Invalid custody reply length")
+            content_type=fields.get("content-type","").lower().strip()
+            if content_type not in ("application/json",
+                                    "application/json; charset=utf-8"):
+                raise Denied("Custody provider did not return strict UTF-8 JSON")
             raw=response.read(16385)
-            if len(raw)>16384:
-                raise Denied("Custody reply exceeds approved limit")
-            result=json.loads(raw.decode("utf-8"),object_pairs_hook=_no_duplicates)
+            if len(raw)>16384 or (length is not None and len(raw)!=int(length)):
+                raise Denied("Custody reply size mismatch")
+            result=json.loads(raw.decode("utf-8"),object_pairs_hook=_no_duplicates,
+                              parse_constant=_reject_nonfinite)
             if type(result) is not dict:
                 raise Denied("Custody reply must be an object")
             return result
