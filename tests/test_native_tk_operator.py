@@ -12,7 +12,7 @@ from unittest.mock import patch
 import unittest
 
 from src.secure_engine import SecureCore
-from src.local_operator_gui import launch_gui
+from src.local_operator_gui import launch_gui, LocalOperatorController, ActionFeedback
 
 
 def descendants(widget):
@@ -155,6 +155,45 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                        self.mid, self.reviewer):
             self.assertNotIn(secret, flat)
         self.assertIn('OFFLINE EXPERIMENTAL WORKFLOW', flat)
+
+    def test_revocation_during_native_confirm_denies_without_write(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'normal')
+        def revoke_on_confirm(*args, **kwargs):
+            self.core.revoke_token(self.reviewer)
+            return True
+        with patch.object(messagebox, 'askyesno', side_effect=revoke_on_confirm):
+            self.buttons['Complete task'].invoke()
+        completed = self.core.db.execute(
+            'SELECT count(*) FROM tasks WHERE completed=1').fetchone()[0]
+        self.assertEqual(completed, 0)
+        self.assertEqual(self.listboxes[1].size(), 0)
+        self.assertEqual(self.listboxes[2].size(), 0)
+        self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
+
+    def test_native_modal_warns_after_uncertain_committed_operation(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        # The controller's actual write/recovery is covered by separate
+        # real SecureCore tests; this verifies the real Tk modal presentation.
+        with patch.object(messagebox, 'askyesno', return_value=True), \\
+             patch.object(LocalOperatorController, 'complete',
+                          return_value=ActionFeedback(
+                              'committed_refresh_unresolved',
+                              'Task committed; display refresh unresolved. Do NOT repeat.')), \\
+             patch.object(messagebox, 'showwarning') as warning:
+            self.buttons['Complete task'].invoke()
+        self.assertEqual(warning.call_count, 1)
+        self.assertIn('Do not repeat', warning.call_args.args[1])
+        self.assertEqual(self.listboxes[2].size(), 0)
+        self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
 
     def test_reviewer_viewer_native_action_control_disabled(self):
         self.open(self.viewer)
