@@ -66,6 +66,16 @@ class PrivateAttorneyOperator:
         """Reauthorize a local screen before rendering a script-free page."""
         return render_private_operator(self.select_matter(token, matter_id, now=now))
 
+    def portfolio(self, token, *, now=None):
+        """Fresh, read-only authorized workload across accessible matters."""
+        from .private_matter_portfolio import PrivateMatterPortfolio
+        return PrivateMatterPortfolio(self).inspect(token, now=now)
+
+    def portfolio_summary(self, token, *, now=None):
+        """Safe-to-display minimized portfolio text; no underlying matter IDs."""
+        from .private_matter_portfolio import render_portfolio_plain
+        return render_portfolio_plain(self.portfolio(token, now=now))
+
     def reviewer_inbox(self, token, matter_id):
         return self.workflow.pending_second_reviews(token, matter_id)
 
