@@ -42,37 +42,41 @@ class LocalOperatorController:
         self._recovery = None
 
     def list_matters(self):
+        # The previous matter list is not authority after a revoked session.
+        # Invalidate it before any I/O so failed access cannot reuse stale IDs.
         self._clear()
+        self._matters = ()
         index = self.operator.matters(self._token)
         self._matters = tuple(item['matter_id'] for item in index['matters'])
         return len(self._matters)
 
     def select(self, position):
+        # Keep the visible matter list available for a deliberate selection,
+        # but no prior task/review selection may survive a failed switch.
         self._clear()
         if type(position) is not int or not 0 <= position < len(self._matters):
             raise Invalid('Invalid matter selection')
         mid = self._matters[position]
-        screen = self.operator.select_matter(self._token, mid)
         self._matter_id = mid
-        self._load_authorized_work()
-        return screen
+        return self._load_authorized_work()
 
     def _load_authorized_work(self):
+        # Stage all three reauthorized reads before publishing ANY actionable
+        # IDs. A denial after task enumeration must not leave usable task IDs.
+        self._tasks, self._reviews = (), ()
         if self._matter_id is None:
             raise Invalid('Matter not selected')
         mid = self._matter_id
-        # Each operation freshly authenticates through SecureCore.
         screen = self.operator.select_matter(self._token, mid)
+        tasks, reviews = (), ()
         if screen.can_complete_tasks:
             view = self.operator.workflow.journey.workbench.matter(self._token, mid)
-            self._tasks = tuple((item['task_id'], item['version'])
-                                for item in view['open_tasks'])
+            tasks = tuple((item['task_id'], item['version'])
+                          for item in view['open_tasks'])
             queue = self.operator.reviewer_inbox(self._token, mid)
-            self._reviews = tuple((item['evidence_id'], item['observation_id'])
-                                  for item in queue['items'])
-        else:
-            self._tasks = ()
-            self._reviews = ()
+            reviews = tuple((item['evidence_id'], item['observation_id'])
+                            for item in queue['items'])
+        self._tasks, self._reviews = tasks, reviews
         return screen
 
     def refresh(self):
