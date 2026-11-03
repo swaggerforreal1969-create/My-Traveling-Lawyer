@@ -5,6 +5,7 @@ certification. No browser, HTTP listener, network or source-gate bypass.
 """
 from pathlib import Path
 import tempfile
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox
 from unittest.mock import patch
@@ -22,6 +23,7 @@ def descendants(widget):
     return result
 
 
+@unittest.skipUnless(os.environ.get('DISPLAY'), 'Native Tk requires an authorized graphical display')
 class NativeTkOperatorAcceptance(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
