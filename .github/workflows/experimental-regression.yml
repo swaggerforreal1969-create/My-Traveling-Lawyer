@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - engineering/**
+  pull_request:
+    branches:
+      - engineering/real-research-task-journey-20261103
   workflow_dispatch:
 permissions:
   contents: read
@@ -35,6 +38,10 @@ jobs:
           python -m py_compile src/attorney_research_workflow.py tests/test_attorney_research_workflow.py tests/test_real_attorney_research_journey.py
           python -m unittest discover -s tests -p 'test_attorney_research_workflow.py' -q
           python -m unittest discover -s tests -p 'test_real_attorney_research_journey.py' -q
+      - name: Fast read-only task reconciliation acceptance
+        run: |
+          python -m py_compile src/task_reconciliation.py tests/test_task_reconciliation.py
+          python -m unittest discover -s tests -p 'test_task_reconciliation.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
@@ -97,4 +104,21 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q src tests
       - name: Full Linux regression
+        run: python -m unittest discover -s tests -q
+
+  diagnostic-regression:
+    # Non-release-only execution. MUST NOT substitute for the strict 42-file
+    # source and immutable-manifest checks in the required test job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned test dependency
+        run: python -m pip install --disable-pip-version-check "cryptography==46.0.4"
+      - name: Compile currently published Python sources
+        run: python -m compileall -q src tests
+      - name: Diagnostic full published-tree regression (not release acceptance)
         run: python -m unittest discover -s tests -q
