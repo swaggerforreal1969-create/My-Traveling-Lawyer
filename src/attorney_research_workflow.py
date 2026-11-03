@@ -25,6 +25,15 @@ class RefreshUnresolved(RuntimeError):
 
 
 @dataclass(frozen=True)
+class CompletionAction:
+    status: str
+    snapshot: object = None
+    legal_deadlines_verified: bool = False
+    court_filing_approved: bool = False
+    independent_audit_verified: bool = False
+
+
+@dataclass(frozen=True)
 class WorkflowResult:
     operation: str
     record_id: str
@@ -75,6 +84,31 @@ class AttorneyResearchWorkflow:
     def completion_preflight(self, token, matter_id, task_id, expected_version):
         """Minimal editor-only readiness to attempt an atomic task completion."""
         return prepare_completion(self.core, token, matter_id, task_id, expected_version)
+
+    def complete_if_ready(self, token, matter_id, task_id, expected_version, *, now=None):
+        """One authorized operator action, not a grant or reusable preflight.
+
+        Preflight and the delegated atomic write share the same local core lock.
+        Another local thread cannot complete between those stages. The core
+        still checks authorization/version at the actual write; a stale client
+        cannot replay a task. Status is not proof of independently held custody.
+        """
+        with self.core.lock:
+            preflight = self.completion_preflight(
+                token, matter_id, task_id, expected_version)
+            if preflight.status == 'already_completed':
+                return CompletionAction('observed_completed_no_write')
+            if not preflight.can_attempt_completion:
+                return CompletionAction('unresolved_no_write')
+            # This is the only completion write in the operator action.
+            self.journey.workbench.complete(
+                token, matter_id, task_id, expected_version)
+        # Do not rerun completion when readiness cannot be refreshed.
+        try:
+            refreshed = self.open(token, matter_id, now=now)
+        except Exception:
+            return CompletionAction('committed_refresh_unresolved')
+        return CompletionAction('completed_and_refreshed', refreshed)
 
     def complete_task(self, token, matter_id, task_id, expected_version, *, now=None):
         # Separate the delegated atomic completion from presentation refresh.
