@@ -183,12 +183,14 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.root.update()
         # The controller's actual write/recovery is covered by separate
         # real SecureCore tests; this verifies the real Tk modal presentation.
-        with patch.object(messagebox, 'askyesno', return_value=True), \\
-             patch.object(LocalOperatorController, 'complete',
-                          return_value=ActionFeedback(
-                              'committed_refresh_unresolved',
-                              'Task committed; display refresh unresolved. Do NOT repeat.')), \\
-             patch.object(messagebox, 'showwarning') as warning:
+        with (
+            patch.object(messagebox, 'askyesno', return_value=True),
+            patch.object(LocalOperatorController, 'complete',
+                         return_value=ActionFeedback(
+                             'committed_refresh_unresolved',
+                             'Task committed; display refresh unresolved. Do NOT repeat.')),
+            patch.object(messagebox, 'showwarning') as warning,
+        ):
             self.buttons['Complete task'].invoke()
         self.assertEqual(warning.call_count, 1)
         self.assertIn('Do not repeat', warning.call_args.args[1])
