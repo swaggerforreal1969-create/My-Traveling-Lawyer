@@ -1,0 +1,36 @@
+name: Experimental source and regression gate
+on:
+  push:
+    branches:
+      - engineering/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Required-source fail-closed check
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          required = [
+              "src/engine.py", "src/secure_engine.py", "src/secure_server.py",
+              "src/assistant_service.py", "src/device_challenge.py",
+              "src/audit_witness.py", "src/research_evidence.py",
+              "tests/test_engine.py", "tests/test_secure_http.py",
+              "tests/test_research_v14.py", "ENGINEERING_CONTINUITY.md"
+          ]
+          missing = [p for p in required if not Path(p).is_file()]
+          if missing:
+              raise SystemExit("INCOMPLETE SOURCE MIGRATION: " + ", ".join(missing))
+          PY
+      - name: Compile Python sources
+        run: python -m compileall -q src tests
+      - name: Run full local regression on Linux
+        run: python -m unittest discover -s tests -q
