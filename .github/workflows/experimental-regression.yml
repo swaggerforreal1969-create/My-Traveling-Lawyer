@@ -131,6 +131,10 @@ jobs:
         run: |
           python -m py_compile tools/offline_restricted_source_audit.py tests/test_offline_restricted_source_audit.py
           python -m unittest discover -s tests -p 'test_offline_restricted_source_audit.py' -q
+      - name: Confidential multi-matter private attorney portfolio acceptance
+        run: |
+          python -m py_compile src/private_matter_portfolio.py src/private_attorney_operator.py tests/test_private_matter_portfolio.py
+          python -m unittest discover -s tests -p 'test_private_matter_portfolio.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
