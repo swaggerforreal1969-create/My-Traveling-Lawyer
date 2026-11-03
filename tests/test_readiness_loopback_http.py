@@ -76,4 +76,50 @@ class HTTPReadinessTests(unittest.TestCase):
         self.assertEqual(404,self.send(path=self.url()+'?auth='+self.token)[0])
         self.assertEqual(403,self.send(extra={'Origin':'null'})[0])
 
+    def raw_request(self, header_lines, *, path=None):
+        """Send exact duplicate fields over the actual socket, without proxy emulation."""
+        con=http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=4)
+        con.putrequest('GET', path or self.url(), skip_host=True, skip_accept_encoding=True)
+        for name, value in header_lines:
+            con.putheader(name, value)
+        con.endheaders()
+        res=con.getresponse(); code=res.status; body=res.read();con.close()
+        return code,body
+
+    def base_fields(self, ticket=None):
+        return [('Host','127.0.0.1:'+str(self.server.server_address[1])),
+                ('Authorization','Bearer '+self.token),
+                ('X-Preview-Ticket',ticket or self.ticket())]
+
+    def test_17_duplicate_authorization_rejected_without_burning_ticket(self):
+        ticket=self.ticket();h=self.base_fields(ticket)
+        self.assertEqual((403,b''),self.raw_request(h+[('authorization','Bearer '+self.outside)]))
+        self.assertEqual(200,self.send(ticket=ticket)[0])
+
+    def test_18_duplicate_preview_ticket_rejected_without_burning(self):
+        ticket=self.ticket();h=self.base_fields(ticket)
+        self.assertEqual((403,b''),self.raw_request(h+[('x-preview-ticket',self.ticket())]))
+        self.assertEqual(200,self.send(ticket=ticket)[0])
+
+    def test_19_duplicate_host_rejected_without_burning(self):
+        ticket=self.ticket();h=self.base_fields(ticket)
+        self.assertEqual((403,b''),self.raw_request(h+[('HOST','evil.example')]))
+        self.assertEqual(200,self.send(ticket=ticket)[0])
+
+    def test_20_proxy_forwarding_headers_rejected(self):
+        for name in ('Proxy-Authorization','Forwarded','X-Forwarded-Host','X-Original-URL','Expect'):
+            with self.subTest(name=name):
+                self.assertEqual(403,self.send(extra={name:'other'})[0])
+
+    def test_21_duplicate_arbitrary_field_rejected(self):
+        ticket=self.ticket();h=self.base_fields(ticket)
+        self.assertEqual(403,self.raw_request(h+[('X-Other','1'),('x-other','2')])[0])
+        self.assertEqual(200,self.send(ticket=ticket)[0])
+
+    def test_22_too_many_headers_rejected(self):
+        ticket=self.ticket();h=self.base_fields(ticket)
+        h.extend(('X-Extra-%02d'%i,'v') for i in range(35))
+        self.assertEqual(403,self.raw_request(h)[0])
+        self.assertEqual(200,self.send(ticket=ticket)[0])
+
 if __name__=='__main__':unittest.main()
