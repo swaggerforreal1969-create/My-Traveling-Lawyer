@@ -30,6 +30,11 @@ jobs:
         run: |
           python -m py_compile src/attorney_journey.py tests/test_attorney_journey.py
           python -m unittest discover -s tests -p test_attorney_journey.py -q
+      - name: Fast genuine research and attorney task journey acceptance
+        run: |
+          python -m py_compile src/attorney_research_workflow.py tests/test_attorney_research_workflow.py tests/test_real_attorney_research_journey.py
+          python -m unittest discover -s tests -p 'test_attorney_research_workflow.py' -q
+          python -m unittest discover -s tests -p 'test_real_attorney_research_journey.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
