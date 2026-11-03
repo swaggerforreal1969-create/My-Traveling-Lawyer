@@ -210,6 +210,38 @@ class DurableLocalWriteFenceTests(unittest.TestCase):
         self.assertTrue(self.fence.is_pending())
         self.assertEqual(self.count('research.second_source_review'),1)
 
+    def test_deleted_fence_sidecar_cannot_be_silently_recreated(self):
+        self.fence.begin()
+        self.fence.path.unlink()
+        with self.assertRaises(Denied):
+            LocalWriteFence(self.path)
+        with self.assertRaises(Denied):
+            self.fence.is_pending()
+        with self.assertRaises(Denied):
+            self.client.complete(0,True)
+        self.assertEqual(self.count('task.complete'),0)
+
+    def test_replaced_sidecar_marker_cannot_be_adopted(self):
+        self.fence.begin()
+        self.fence.path.unlink()
+        with sqlite3.connect(str(self.fence.path)) as db:
+            db.execute("CREATE TABLE fence_marker(slot INTEGER PRIMARY KEY,marker TEXT)")
+            db.execute("INSERT INTO fence_marker VALUES(1,?)",('forged',))
+        with self.assertRaises(Denied):
+            LocalWriteFence(self.path)
+        with self.assertRaises(Denied):
+            self.client.complete(0,True)
+        self.assertEqual(self.count('task.complete'),0)
+
+    def test_correct_existing_fence_reopens_with_same_binding(self):
+        another=LocalWriteFence(self.path)
+        self.assertFalse(another.is_pending())
+        another.begin()
+        self.assertTrue(self.fence.is_pending())
+        with self.assertRaises(Denied):
+            LocalWriteFence(self.path).begin()
+        self.assertEqual(self.count('task.complete'),0)
+
     def test_unresolved_recovery_never_auto_clears(self):
         from types import SimpleNamespace
         with patch.object(self.client.operator.workflow,'open',
