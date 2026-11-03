@@ -1,0 +1,9 @@
+# External trust rotation: offline admission preflight
+
+**Status: security-design acceptance only.** No independent operator, external service, real signing credential or human release approval exists. This module does not rotate any keys, update stored trust pins, clear local pending writes, send HTTP requests or activate production.
+
+`src/offline_trust_rotation.py` requires an independently retained current checkpoint (sequence, exact digest and signer identity), a trusted current-time source, cryptographic verification by the **previously pinned signer**, separate verification by the **new signer**, and an approval callback that must be backed by a real *different authorized operator*. The module accepts a strict versioned, time-bounded signed rotation manifest and rejects wrong/changed predecessor, skipped sequence, revoked/invalid signatures, unsigned extra fields, future or expired notices, unchanged signer and absent operator authorization. A successful result is a **proposal for manual review**, not pin advancement or a certificate replacement. Independent operation of the approval callback must be verified outside software tests.
+
+`tests/test_offline_trust_rotation.py` uses test-only HMAC secrets and fake approvals. These prove shape/logic only: they are NOT a real independent trust witness. In production, successor signer-key custody, real key revocation, access control, trusted current time, dual-control approval, receipt retention, independent pin storage and actual provider rollback/equivocation tests require the separately appointed external reviewer and provider operator.
+
+Release blocker status: ten originals restricted; 42-file gate 32/42. Security Issue #1 open without reviewer; independent provider not connected. The live HTTPS adapter remains disabled by default. No deployment, merge, purchases, permissions, external network calls or actual key rotation allowed.

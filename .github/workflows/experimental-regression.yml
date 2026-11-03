@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - engineering/**
+  pull_request:
+    branches:
+      - engineering/real-research-task-journey-20261103
   workflow_dispatch:
 permissions:
   contents: read
@@ -35,6 +38,95 @@ jobs:
           python -m py_compile src/attorney_research_workflow.py tests/test_attorney_research_workflow.py tests/test_real_attorney_research_journey.py
           python -m unittest discover -s tests -p 'test_attorney_research_workflow.py' -q
           python -m unittest discover -s tests -p 'test_real_attorney_research_journey.py' -q
+      - name: Fast read-only task reconciliation acceptance
+        run: |
+          python -m py_compile src/task_reconciliation.py tests/test_task_reconciliation.py
+          python -m unittest discover -s tests -p 'test_task_reconciliation.py' -q
+      - name: Fast private completion preflight acceptance
+        run: |
+          python -m py_compile src/task_completion_preflight.py tests/test_task_completion_preflight.py
+          python -m unittest discover -s tests -p 'test_task_completion_preflight.py' -q
+      - name: Fast atomic attorney operator task action acceptance
+        run: |
+          python -m py_compile src/attorney_research_workflow.py tests/test_task_operator_action.py
+          python -m unittest discover -s tests -p 'test_task_operator_action.py' -q
+      - name: Fast actor-scoped research write recovery acceptance
+        run: |
+          python -m py_compile src/research_write_recovery.py tests/test_research_write_recovery.py
+          python -m unittest discover -s tests -p 'test_research_write_recovery.py' -q
+      - name: Fast confidential second-review queue acceptance
+        run: |
+          python -m py_compile src/attorney_research_workflow.py tests/test_private_review_queue.py
+          python -m unittest discover -s tests -p 'test_private_review_queue.py' -q
+      - name: Cross-process independent reviewer acceptance
+        run: |
+          python -m py_compile src/second_source_review.py tests/test_cross_process_review.py
+          python -m unittest discover -s tests -p 'test_cross_process_review.py' -q
+      - name: Confidential inbox review action acceptance
+        run: |
+          python -m py_compile src/attorney_research_workflow.py tests/test_review_inbox_action.py
+          python -m unittest discover -s tests -p 'test_review_inbox_action.py' -q
+      - name: Private attorney operator complete journey acceptance
+        run: |
+          python -m py_compile src/private_attorney_operator.py tests/test_private_attorney_operator.py
+          python -m unittest discover -s tests -p 'test_private_attorney_operator.py' -q
+      - name: Accessible confidential operator document acceptance
+        run: |
+          python -m py_compile src/private_operator_document.py tests/test_accessible_private_operator.py
+          python -m unittest discover -s tests -p 'test_accessible_private_operator.py' -q
+      - name: Keyboard-driven local attorney operator acceptance
+        run: |
+          python -m py_compile src/local_operator_cli.py tests/test_local_operator_cli.py
+          python -m unittest discover -s tests -p 'test_local_operator_cli.py' -q
+      - name: Local graphical operator controller acceptance (headless)
+        run: |
+          python -m py_compile src/local_operator_gui.py tests/test_local_operator_gui.py
+          python -m unittest discover -s tests -p 'test_local_operator_gui.py' -q
+      - name: Native Tk graphical acceptance on preinstalled virtual display
+        run: |
+          command -v xvfb-run
+          python -m py_compile src/local_operator_gui.py tests/test_native_tk_operator.py
+          xvfb-run -a python -m unittest discover -s tests -p 'test_native_tk_operator.py' -q
+      - name: Capture three synthetic-only native Tk PNG screenshots
+        run: |
+          command -v xvfb-run
+          python -m py_compile tests/capture_native_tk_screenshots.py
+          PYTHONPATH=. xvfb-run -a python tests/capture_native_tk_screenshots.py
+      - name: Retain synthetic-only screenshots for independent visual inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtl-fictional-native-tk-screenshots
+          path: artifacts/tk-screenshots/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Durable local crash and cross-process write fence acceptance
+        run: |
+          python -m py_compile src/durable_local_write_fence.py src/local_operator_gui.py tests/test_durable_local_write_fence.py
+          python -m unittest discover -s tests -p 'test_durable_local_write_fence.py' -q
+      - name: Synthetic checkpoint readback and trust-pin adversarial acceptance
+        run: |
+          python -m py_compile src/independent_checkpoint_boundary.py tests/test_independent_checkpoint_boundary.py
+          python -m unittest discover -s tests -p 'test_independent_checkpoint_boundary.py' -q
+      - name: Offline atomic checkpoint admission adversarial acceptance
+        run: |
+          python -m py_compile src/checkpoint_admission_prototype.py tests/test_checkpoint_admission_prototype.py
+          python -m unittest discover -s tests -p 'test_checkpoint_admission_prototype.py' -q
+      - name: Provider-neutral separate-process custody acceptance
+        run: |
+          python -m py_compile src/provider_neutral_custody_client.py tests/test_provider_neutral_custody_client.py
+          python -m unittest discover -s tests -p 'test_provider_neutral_custody_client.py' -q
+      - name: Disabled real-provider HTTPS contract security acceptance
+        run: |
+          python -m py_compile src/pinned_https_custody_adapter.py tests/test_pinned_https_custody_adapter.py
+          python -m unittest discover -s tests -p 'test_pinned_https_custody_adapter.py' -q
+      - name: Offline dual-signature trust rotation and operator approval acceptance
+        run: |
+          python -m py_compile src/offline_trust_rotation.py tests/test_offline_trust_rotation.py
+          python -m unittest discover -s tests -p 'test_offline_trust_rotation.py' -q
+      - name: Offline rotation replay and cross-process CAS acceptance
+        run: |
+          python -m py_compile src/offline_rotation_ledger.py tests/test_offline_rotation_ledger.py
+          python -m unittest discover -s tests -p 'test_offline_rotation_ledger.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
@@ -97,4 +189,21 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q src tests
       - name: Full Linux regression
+        run: python -m unittest discover -s tests -q
+
+  diagnostic-regression:
+    # Non-release-only execution. MUST NOT substitute for the strict 42-file
+    # source and immutable-manifest checks in the required test job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned test dependency
+        run: python -m pip install --disable-pip-version-check "cryptography==46.0.4"
+      - name: Compile currently published Python sources
+        run: python -m compileall -q src tests
+      - name: Diagnostic full published-tree regression (not release acceptance)
         run: python -m unittest discover -s tests -q
