@@ -72,6 +72,11 @@ class AttorneyResearchWorkflow:
         return reconcile_task(self.core, token, matter_id, task_id, expected_version)
 
     def complete_task(self, token, matter_id, task_id, expected_version, *, now=None):
-        # Use the existing delegated task completion and post-commit refresh;
-        # it never retries the write after a failure to refresh.
-        return self.journey.complete_and_refresh(token, matter_id, task_id, expected_version, now=now)
+        # Separate the delegated atomic completion from presentation refresh.
+        # A committed completion must produce an explicit unresolved outcome if
+        # the subsequent read fails, never an invitation to replay the write.
+        self.journey.workbench.complete(token, matter_id, task_id, expected_version)
+        try:
+            return self.open(token, matter_id, now=now)
+        except Exception as exc:
+            raise RefreshUnresolved('task.complete') from exc
