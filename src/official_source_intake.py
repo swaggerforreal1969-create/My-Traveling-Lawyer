@@ -105,9 +105,18 @@ class OfficialSourceIntake:
         with self.core.lock:
             user = self.core._identity(token)
             self.core._role(user, matter_id, ('owner','editor','viewer'))
-            row = self.core.db.execute('SELECT content_digest FROM research_evidence WHERE id=? AND matter_id=?',
-                                       (evidence_id,matter_id)).fetchone()
-            if row is None: raise EvidenceInvalid('Evidence not found')
+            row = self.core.db.execute('''SELECT title, url, excerpt, content_digest
+                FROM research_evidence WHERE id=? AND matter_id=?''',
+                (evidence_id, matter_id)).fetchone()
+            if row is None:
+                raise EvidenceInvalid('Evidence not found')
+            # Revalidate the actual current source, not only its stored digest.
+            # A changed excerpt must never inherit earlier provenance records.
+            computed = hashlib.sha256(json.dumps(
+                [row['title'], row['url'], row['excerpt']],
+                separators=(',', ':')).encode()).hexdigest()
+            if computed != row['content_digest']:
+                raise EvidenceInvalid('Underlying research evidence integrity mismatch')
             rows = self.core.db.execute('SELECT * FROM official_source_intake WHERE matter_id=? AND evidence_id=? ORDER BY captured_at,id LIMIT 102',
                                         (matter_id,evidence_id)).fetchall()
             if len(rows) > 100: raise EvidenceInvalid('Too many observations')
