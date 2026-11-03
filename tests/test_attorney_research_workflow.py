@@ -114,6 +114,26 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(self.core.db.execute("SELECT count(*) FROM audit_chain WHERE action='research.evidence_add'").fetchone()[0],1)
         self.assertEqual(len(self.workflow.open(self.token,self.mid,now=self.now).workbench['open_tasks']),1)
 
+    def test_task_completion_refresh_failure_is_explicitly_unresolved(self):
+        before=self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'").fetchone()[0]
+        with patch.object(self.workflow, 'open',
+                          side_effect=RuntimeError('Fictional lost refresh response')):
+            with self.assertRaises(RefreshUnresolved) as ctx:
+                self.workflow.complete_task(
+                    self.token, self.mid, self.task['id'], 1, now=self.now)
+        self.assertEqual(ctx.exception.operation, 'task.complete')
+        after=self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'").fetchone()[0]
+        self.assertEqual(after, before+1)
+        observation=self.workflow.reconcile_completion(
+            self.token, self.mid, self.task['id'], 1)
+        self.assertEqual(observation.status, 'observed_completed')
+        self.assertFalse(observation.independent_audit_verified)
+        with self.assertRaises(Stale):
+            self.workflow.complete_task(
+                self.token, self.mid, self.task['id'], 1, now=self.now)
+
     def _has_table(self):
         return bool(self.core.db.execute("SELECT 1 FROM sqlite_master WHERE name='research_evidence'").fetchone())
 
