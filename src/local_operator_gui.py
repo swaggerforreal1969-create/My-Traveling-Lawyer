@@ -167,7 +167,7 @@ class LocalOperatorController:
                               'Local review commit observed; independent custody not verified.')
 
 
-def launch_gui(core, token):
+def launch_gui(core, token, *, run_mainloop=True):
     """Real Tk controls. Disabled write buttons until a current row selected."""
     import tkinter as tk
     from tkinter import ttk, messagebox
@@ -337,7 +337,9 @@ def launch_gui(core, token):
     matter_list.bind('<Return>', lambda event: select_matter())
     refresh_lists()
     update_controls()
-    root.mainloop()
+    if run_mainloop:
+        root.mainloop()
+    return root
 
 
 def main():
