@@ -1,6 +1,8 @@
 """Read-only uncertain-task recovery with real local authenticated core; fictional only."""
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 from src.secure_engine import SecureCore, Denied, Invalid, Stale
 from src.task_reconciliation import reconcile_task
@@ -74,6 +76,24 @@ class TaskReconciliationTests(unittest.TestCase):
         self.core.db.execute('UPDATE audit_chain SET row_hash=? WHERE seq=1', ('0'*64,))
         with self.assertRaises(Invalid):
             self.observe()
+
+    def test_concurrent_writers_one_completion_and_consistent_reconciliation(self):
+        barrier = Barrier(2)
+        def attempt(_):
+            barrier.wait(timeout=5)
+            try:
+                self.core.complete_task(self.token, self.tid, 1)
+                return 'committed'
+            except Stale:
+                return 'stale'
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(attempt, range(2)))
+        self.assertCountEqual(outcomes, ['committed', 'stale'])
+        self.assertEqual(self.observe().status, 'observed_completed')
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0], 1)
+        self.assertTrue(self.core.verify_audit())
 
     def test_no_bool_versions(self):
         with self.assertRaises(Invalid):
