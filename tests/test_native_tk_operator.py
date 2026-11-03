@@ -76,16 +76,16 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.open()
         self.assertGreaterEqual(self.root.winfo_width(), 580)
         self.assertGreaterEqual(self.root.winfo_height(), 520)
-        self.assertEqual(self.buttons['Record review'].cget('state'), 'disabled')
-        self.assertEqual(self.buttons['Complete task'].cget('state'), 'disabled')
-        self.assertEqual(self.buttons['Recover review'].cget('state'), 'disabled')
+        self.assertEqual(str(self.buttons['Record review'].cget('state'))), 'disabled')
+        self.assertEqual(str(self.buttons['Complete task'].cget('state'))), 'disabled')
+        self.assertEqual(str(self.buttons['Recover review'].cget('state'))), 'disabled')
         self.select_matter()
         self.assertEqual(self.listboxes[1].size(), 1)
         self.assertEqual(self.listboxes[2].size(), 1)
         self.listboxes[1].selection_set(0)
         self.root.update()
-        self.assertEqual(self.buttons['Record review'].cget('state'), 'normal')
-        self.assertEqual(self.buttons['Complete task'].cget('state'), 'disabled')
+        self.assertEqual(str(self.buttons['Record review'].cget('state'))), 'normal')
+        self.assertEqual(str(self.buttons['Complete task'].cget('state'))), 'disabled')
         self.assertNotIn('PRIVATE FICTITIOUS CASE',
                          ' '.join(w.get(0, 'end')[0] for w in self.listboxes if w.size()))
         self.assertNotIn('SECRET PRIVATE TASK', self.root.title())
@@ -95,7 +95,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.select_matter()
         self.listboxes[2].selection_set(0)
         self.root.update()
-        self.assertEqual(self.buttons['Complete task'].cget('state'), 'normal')
+        self.assertEqual(str(self.buttons['Complete task'].cget('state'))), 'normal')
         with patch.object(messagebox, 'askyesno', return_value=False) as ask:
             self.buttons['Complete task'].invoke()
         self.assertEqual(ask.call_count, 1)
@@ -123,8 +123,8 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.select_matter()
         self.assertEqual(self.listboxes[1].size(), 0)
         self.assertEqual(self.listboxes[2].size(), 0)
-        self.assertEqual(self.buttons['Record review'].cget('state'), 'disabled')
-        self.assertEqual(self.buttons['Complete task'].cget('state'), 'disabled')
+        self.assertEqual(str(self.buttons['Record review'].cget('state'))), 'disabled')
+        self.assertEqual(str(self.buttons['Complete task'].cget('state'))), 'disabled')
 
 
 if __name__ == '__main__':
