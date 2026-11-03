@@ -35,7 +35,7 @@ def reconcile_research_write(core, token, matter_id, operation, record_id):
     and its audit history may roll back together: this cannot rule out rollback.
     """
     if (not isinstance(matter_id, str) or not 1 <= len(matter_id) <= 64
-            or operation not in _TARGETS
+            or not isinstance(operation, str) or operation not in _TARGETS
             or not isinstance(record_id, str) or len(record_id) != 32
             or any(c not in '0123456789abcdef' for c in record_id)):
         raise Invalid('Invalid research reconciliation request')
@@ -93,6 +93,19 @@ def reconcile_research_write(core, token, matter_id, operation, record_id):
                     raise Invalid('Missing review observation')
                 original = dict(obs)
                 original_hash = original.pop('record_digest')
+                source = core.db.execute(
+                    'SELECT title,url,excerpt,content_digest FROM research_evidence WHERE matter_id=? AND id=?',
+                    (matter_id, data['evidence_id'])).fetchone()
+                if source is None:
+                    raise Invalid('Missing review parent evidence')
+                src_digest = hashlib.sha256(json.dumps(
+                    [source['title'], source['url'], source['excerpt']],
+                    separators=(',', ':')).encode()).hexdigest()
+                if (src_digest != source['content_digest']
+                        or original['evidence_digest'] != src_digest
+                        or hashlib.sha256(original['captured_text'].encode('utf-8')).hexdigest()
+                        != original['captured_digest']):
+                    raise Invalid('Review parent evidence integrity mismatch')
                 if (_digest(original) != original_hash
                         or data['observation_digest'] != original_hash
                         or data['original_actor_id'] != original['actor_id']
