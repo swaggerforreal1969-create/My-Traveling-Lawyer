@@ -72,7 +72,10 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.select()
         self.core.revoke_token(self.reviewer)
         with self.assertRaises(Denied):self.client.refresh()
-        with self.assertRaises(Denied):
+        # Failed authorization clears all cached selectable IDs. A subsequent
+        # write attempt must fail even before reaching a stale credential.
+        self.assertEqual(self.client.counts(),(0,0))
+        with self.assertRaises(Invalid):
             self.client.review(0,'corroborated_manually',
                 'Revoked session cannot commit review',True)
         self.assertEqual(self.audit_count('research.second_source_review'),0)
