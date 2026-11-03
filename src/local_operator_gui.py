@@ -46,7 +46,11 @@ class LocalOperatorController:
             raise Invalid('Resolve pending review using read-only reconciliation first')
 
     def _clear(self):
-        self._assert_no_uncertain_review()
+        # An in-memory uncertain review retains its exact recovery identity.
+        # A different, restarted window may select matters READ-ONLY while
+        # the durable global write fence remains pending.
+        if self._recovery is not None:
+            raise Invalid('Reconcile the current review before switching matters')
         self._matter_id = None
         self._tasks = ()
         self._reviews = ()
@@ -198,7 +202,7 @@ class LocalOperatorController:
                 'reconciliation_unresolved',
                 'Review reconciliation unresolved. Do NOT repeat the write.')
         self._recovery = None
-        if self._durable_fence is not None:
+        if self._durable_fence is not None and self._durable_fence.is_pending():
             self._durable_fence.finish_confirmed()
         try:
             self.refresh()
