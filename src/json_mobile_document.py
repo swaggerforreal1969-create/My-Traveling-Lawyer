@@ -67,8 +67,14 @@ def render_authenticated_readiness(response):
     body = getattr(response, 'body', None)
     if not isinstance(body, bytes) or len(body) > 8192 or not body:
         raise UnsafeReadinessDocument('Invalid response bytes')
+    cache_directives = [part.strip().lower() for part in seen.get('cache-control', '').split(',')]
+    # Only the narrowly allowed upstream non-cacheable policy is accepted.
+    # Substrings such as 'not-no-store' are not actual cache directives.
+    allowed_cache = {'no-store', 'no-cache', 'must-revalidate', 'private'}
+    if (not cache_directives or 'no-store' not in cache_directives or
+            any(part not in allowed_cache for part in cache_directives)):
+        raise UnsafeReadinessDocument('Untrusted cache directives')
     if (seen.get('content-type') != 'application/json; charset=utf-8' or
-            'no-store' not in seen.get('cache-control', '').lower() or
             seen.get('x-content-type-options') != 'nosniff' or
             seen.get('content-length') != str(len(body))):
         raise UnsafeReadinessDocument('Authenticated response security policy missing')
