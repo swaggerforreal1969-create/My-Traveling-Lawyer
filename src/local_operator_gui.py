@@ -106,7 +106,9 @@ class LocalOperatorController:
         return (len(self._tasks), len(self._reviews))
 
     def has_recovery(self):
-        return self._recovery is not None
+        return (self._recovery is not None or (
+            self._durable_fence is not None and self._matter_id is not None
+            and self._durable_fence.is_pending()))
 
     def review(self, position, decision, note, confirmed):
         if not confirmed:
@@ -120,7 +122,14 @@ class LocalOperatorController:
             raise Invalid('Human review note must be 15–1200 characters')
         eid, oid = self._reviews[position]
         if self._durable_fence is not None:
-            self._durable_fence.begin()  # persisted BEFORE the write
+            with self.operator.core.lock:
+                actor = self.operator.core._identity(self._token)
+                self.operator.core._role(actor, self._matter_id, ('owner', 'editor'))
+                tip = self.operator.core.db.execute(
+                    'SELECT COALESCE(MAX(seq),0) FROM audit_chain').fetchone()[0]
+            self._durable_fence.begin(
+                review_identity=(actor['id'], self._matter_id, eid, oid),
+                audit_before=tip)  # intent is committed BEFORE the write
         self._recovery = None
         try:
             committed = self.operator.decide_review(self._token, self._matter_id,
@@ -187,7 +196,73 @@ class LocalOperatorController:
                                   'Read-only state refresh unresolved; no new write.')
         return ActionFeedback(result.status, allowed[result.status])
 
+    def reconcile_pending_review_after_restart(self):
+        """Human-triggered ONLY, actor-authorized read-only local reconciliation.
+
+        Scan only this actor's own review records in the selected matter; use
+        the prewrite fingerprint and monotonic local audit-seq lower bound.
+        The local DB and fence can roll back together. No custody proof.
+        """
+        if (self._durable_fence is None or not self._durable_fence.is_pending()
+                or self._matter_id is None):
+            raise Invalid('No restart recovery available')
+        self._tasks, self._reviews = (), ()
+        core = self.operator.core
+        with core.lock:
+            actor=core._identity(self._token)
+            core._role(actor, self._matter_id, ('owner','editor'))
+            if not core.verify_audit():
+                raise Denied('Local audit not verified')
+            rows=core.db.execute(
+                '''SELECT id,evidence_id,observation_id FROM source_second_review
+                   WHERE matter_id=? AND reviewer_id=?
+                   ORDER BY recorded_at,id LIMIT 102''',
+                (self._matter_id,actor['id'])).fetchall()
+            if len(rows)>100:
+                raise Denied('Recovery search limit exceeded')
+            matches=[]
+            for row in rows:
+                events=core.db.execute(
+                    '''SELECT seq,actor_id FROM audit_chain
+                       WHERE action='research.second_source_review' AND target=?''',
+                    (row['id'],)).fetchall()
+                if len(events)!=1 or events[0]['actor_id']!=actor['id']:
+                    continue
+                identity=(actor['id'],self._matter_id,
+                          row['evidence_id'],row['observation_id'])
+                if self._durable_fence.pending_review_matches(identity,events[0]['seq']):
+                    matches.append(row['id'])
+            if len(matches)!=1:
+                return ActionFeedback(
+                    'reconciliation_unresolved',
+                    'No unique actor-authorized local review commit observed. '
+                    'Write fence remains pending; do NOT repeat.')
+            # Only this actor-scoped research history check can confirm the
+            # matching local review. Never trust the fingerprint in isolation.
+            result=self.operator.reconcile_research(
+                self._token,self._matter_id,'source.second_review',matches[0])
+            if result.status!='observed_local_commit':
+                return ActionFeedback(
+                    'reconciliation_unresolved',
+                    'Review reconciliation unresolved; no write permitted.')
+            self._durable_fence.finish_confirmed()
+            self._recovery=None
+        try:
+            self.refresh()
+        except Exception:
+            self._tasks,self._reviews=(),()
+            return ActionFeedback(
+                'observed_local_commit_refresh_unresolved',
+                'Local review commit observed; display unresolved. '
+                'Independent custody not verified. Do NOT repeat.')
+        return ActionFeedback(
+            'observed_local_commit',
+            'Local review commit observed after restart; '
+            'independent custody not verified.')
+
     def reconcile_last_review(self):
+        if self._recovery is None and self._durable_fence is not None:
+            return self.reconcile_pending_review_after_restart()
         if self._recovery is None or self._matter_id is None:
             raise Invalid('No uncertain review to reconcile')
         operation, record_id = self._recovery
