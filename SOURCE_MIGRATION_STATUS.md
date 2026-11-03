@@ -64,3 +64,14 @@ No secrets or real client material in git.
 - Archive SHA-256 (local): d31e068154b735424d5eae0d2fb2da7faa9627c223f57ca0e455d23a3e44.
 - New local full-suite attempts timed out at 30s and 18s, respectively; historical 292/292 local pass is retained but NOT reproduced this cycle. Last visible verbose test before 18s timeout: test_secure_engine.AuthorizationTests.test_persistent_authorization.
 - Next required acceptance: transfer sanitized source/tests to this isolated branch, verify exact manifest and Linux CI. No real WebAuthn or production 24/7 AI is claimed.
+
+## 2026-11-03 verified transfer bridge checkpoint
+- Safely staged original source through temporary private file transfer and connected GitHub tool; did not bypass connector safety checks.
+- Original application archive has **42 distinct regular files**. Of those, **32 are now represented** on the engineering branch (README.md updated on engineering branch only).
+- **Ten source files still missing:** My-Travelling-Lawyer-OPEN-ME.html, src/secure_index.html, src/index.html, src/app.js, src/__init__.py, src/secure_app.js, src/secure_server.py, tests/test_milestone_v06.py, tests/test_engine.py, tests/test_custody_v11.py.
+- Some source uploads returned safety blocks. Do not retry in altered/encoded form to bypass these checks. Missing authenticated HTTP server and UI prevent full release acceptance.
+- Local regression run **292/292 passed in 25.751 seconds**, using original preserved source; this is not Linux GitHub CI.
+- Independently compared eight GitHub blob SHAs against Git blob hashes computed from the archive: src/engine.py, src/secure_engine.py, src/assistant_service.py, src/audit_witness.py, src/device_challenge.py, src/server.py, tests/test_secure_engine.py, tests/test_research_v14.py — **8/8 exact matches**.
+- GitHub branch comparison with main: 35 changed files, 36 commits ahead at last pre-checkpoint inspection. Main is unmodified.
+- GitHub combined commit status showed no reported successful CI checks. CI must fail closed until complete source is uploaded.
+- Next task: resolve blocked files via authorized, security-reviewed publication, then verify all 42 blobs and complete GitHub Linux/Chromium gate. No WebAuthn or hosted 24/7 AI is claimed.
