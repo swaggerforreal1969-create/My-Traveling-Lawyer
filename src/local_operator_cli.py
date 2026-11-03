@@ -21,9 +21,17 @@ class LocalOperatorConsole:
         self.read = input if read is None else read
         self.write = print if write is None else write
 
-    def _choose(self, title, count):
+    def _choose(self, title, count, *, portfolio=None):
         self.write(title)
-        response = self.read('Choose a number, or 0 to cancel: ').strip()
+        while True:
+            response = self.read(
+                'Choose a number, P for private workload, or 0 to cancel: '
+                if portfolio is not None else
+                'Choose a number, or 0 to cancel: ').strip()
+            if response == 'P' and portfolio is not None:
+                self.write(portfolio())
+                continue
+            break
         if response == '0':
             return None
         if not response.isascii() or not response.isdecimal():
@@ -49,7 +57,9 @@ class LocalOperatorConsole:
                     self.write('No authorized matters.')
                     return
                 self.write('Authorized matters: ' + str(len(matter_index)))
-                selection = self._choose('Select matter by position.', len(matter_index))
+                selection = self._choose(
+                    'Select matter by position.',len(matter_index),
+                    portfolio=lambda: self.operator.portfolio_summary(token))
                 if selection is None:
                     return
                 matter_id = matter_index[selection]['matter_id']
