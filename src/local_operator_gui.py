@@ -106,6 +106,19 @@ class LocalOperatorController:
     def counts(self):
         return (len(self._tasks), len(self._reviews))
 
+    def portfolio_summary(self):
+        """Fresh authorized private multi-matter counts; never a write grant.
+
+        Hide prior actionable IDs before any portfolio read, even if
+        authorization, integrity or reconciliation fails during rendering.
+        Preserve unresolved review identity for separate human recovery.
+        """
+        self._tasks, self._reviews = (), ()
+        if self._recovery is None:
+            self._matter_id = None
+            self._matters = ()
+        return self.operator.portfolio_summary(self._token)
+
     def has_recovery(self):
         return (self._recovery is not None or (
             self._durable_fence is not None and self._matter_id is not None
@@ -331,6 +344,14 @@ def launch_gui(core, token, *, run_mainloop=True):
     task_list = tk.Listbox(panels, exportselection=False, height=4, font=('TkDefaultFont',12))
     for col, control in enumerate((matter_list,review_list,task_list)):
         control.grid(row=1,column=col,sticky='nsew',padx=4)
+    # Privacy-safe observational panel. No case data, tokens or internal IDs.
+    portfolio_panel = ttk.LabelFrame(outer, text='Authorized workload — read only')
+    portfolio_panel.pack(fill='x', pady=(4, 2))
+    portfolio_text = tk.Text(portfolio_panel, height=5, wrap='word',
+                             font=('TkDefaultFont', 11), takefocus=True)
+    portfolio_text.pack(fill='x')
+    portfolio_text.insert('1.0', 'Select Workload to reauthorize current counts.')
+    portfolio_text.configure(state='disabled')
     actions = ttk.Frame(outer)
     actions.pack(fill='x')
     choice = tk.StringVar(value='corroborated_manually')
@@ -354,7 +375,38 @@ def launch_gui(core, token, *, run_mainloop=True):
         task_button.configure(state='normal' if task_list.curselection() else 'disabled')
         recovery_button.configure(state='normal' if controller.has_recovery() else 'disabled')
 
+    def clear_portfolio():
+        portfolio_text.configure(state='normal')
+        portfolio_text.delete('1.0', 'end')
+        portfolio_text.configure(state='disabled')
+
+    def clear_all_visible_work():
+        clear_portfolio()
+        matter_list.delete(0, 'end')
+        review_list.delete(0, 'end')
+        task_list.delete(0, 'end')
+        controller._tasks, controller._reviews = (), ()
+        controller._matters = ()
+        # Keep uncertain review identity intact; it must not be auto-cleared.
+        update_controls()
+
+    def show_portfolio():
+        # Never leave stale aggregate counts visible after failed authorization.
+        clear_all_visible_work()
+        try:
+            summary = controller.portfolio_summary()
+            portfolio_text.configure(state='normal')
+            portfolio_text.insert('1.0', summary)
+            portfolio_text.configure(state='disabled')
+            status.set('Read-only workload refreshed. Select Refresh matters to return.')
+            portfolio_text.focus_set()
+        except (Denied, Invalid, Stale, EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Workload unavailable or access changed. Reauthenticate.')
+        update_controls()
+
     def refresh_lists():
+        clear_portfolio()
         try:
             number = controller.list_matters()
             matter_list.delete(0,'end')
@@ -366,10 +418,11 @@ def launch_gui(core, token, *, run_mainloop=True):
             matter_list.focus_set()
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Access denied or state changed. Close and reauthenticate.')
-            matter_list.delete(0,'end')
+            clear_all_visible_work()
         update_controls()
 
     def select_matter():
+        clear_portfolio()
         if not matter_list.curselection():
             return
         try:
@@ -377,11 +430,11 @@ def launch_gui(core, token, *, run_mainloop=True):
             display_counts()
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Matter access denied. Reauthenticate before continuing.')
-            review_list.delete(0,'end')
-            task_list.delete(0,'end')
+            clear_all_visible_work()
         update_controls()
 
     def display_counts():
+        clear_portfolio()
         try:
             screen=controller.refresh()
             tasks,reviews=controller.counts()
@@ -393,7 +446,7 @@ def launch_gui(core, token, *, run_mainloop=True):
                        ' • reviews awaiting a second human: '+str(screen.pending_second_review_count))
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Authorization or state changed. Reauthenticate.')
-            clear_stale_actions()
+            clear_all_visible_work()
         update_controls()
 
     def clear_stale_actions():
@@ -482,6 +535,8 @@ def launch_gui(core, token, *, run_mainloop=True):
             status.set('Read-only recovery unresolved. Do NOT repeat the write.')
             update_controls()
 
+    portfolio_button = ttk.Button(buttons,text='Workload (read only)',
+                                  command=show_portfolio)
     select_button = ttk.Button(buttons,text='Select matter',command=select_matter)
     refresh_button = ttk.Button(buttons,text='Refresh',command=display_counts)
     review_button = ttk.Button(buttons,text='Record review',command=submit_review)
@@ -490,13 +545,13 @@ def launch_gui(core, token, *, run_mainloop=True):
     # Two rows preserve button reachability at the minimum 580px window.
     # Each button stays in tab order; no horizontal scrolling is needed.
     for i, button in enumerate((select_button, refresh_button, review_button,
-                                task_button, recovery_button)):
+                                task_button, recovery_button, portfolio_button)):
         button.grid(row=i // 3, column=i % 3, sticky='ew', padx=3, pady=3)
     # Standard Tab and arrow navigation remain intact. Named keyboard
     # shortcuts offer direct access without inventing active web controls.
     ttk.Label(outer, text='Keyboard: Alt+M matter, Alt+R reviews, '
               'Alt+T tasks, Alt+N note, Alt+V record review, '
-              'Alt+K complete task, Alt+F refresh.',
+              'Alt+K complete task, Alt+F refresh, Alt+P workload.',
               wraplength=500).pack(anchor='w')
     matter_list.bind('<<ListboxSelect>>', lambda event: update_controls())
     review_list.bind('<<ListboxSelect>>', lambda event: update_controls())
@@ -511,6 +566,7 @@ def launch_gui(core, token, *, run_mainloop=True):
               if str(task_button.cget('state')) != 'disabled' else None)
     root.bind('<Alt-f>', lambda event: display_counts()
               if str(refresh_button.cget('state')) != 'disabled' else None)
+    root.bind('<Alt-p>', lambda event: show_portfolio())
     matter_list.bind('<Return>', lambda event: select_matter())
     refresh_lists()
     update_controls()
