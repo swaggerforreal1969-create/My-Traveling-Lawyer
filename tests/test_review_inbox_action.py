@@ -73,7 +73,7 @@ class ReviewInboxActionTests(unittest.TestCase):
             self.submit(observation=old)
         self.assertEqual(self.audit_count(), 0)
         result = self.submit(observation=current, decision='needs_further_review')
-        self.assertIn(b'Further review', result.snapshot.readiness_html)
+        self.assertIn(b'Additional human review required', result.snapshot.readiness_html)
         self.assertEqual(self.audit_count(), 1)
 
     def test_viewer_self_reviewer_cross_firm_and_revoked_denied(self):
