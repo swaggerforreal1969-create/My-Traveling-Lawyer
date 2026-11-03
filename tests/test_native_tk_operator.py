@@ -123,6 +123,39 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.root.update()
         self.assertEqual(self.root.focus_get(), self.texts[0])
 
+    def test_minimum_and_wide_window_keep_all_actions_inside_view(self):
+        self.open()
+        for width, height in ((580, 520), (760, 650), (1024, 768)):
+            with self.subTest(window=(width, height)):
+                self.root.geometry(f'{width}x{height}+0+0')
+                self.root.update()
+                available = self.root.winfo_width()
+                self.assertGreaterEqual(available, width)
+                for label, button in self.buttons.items():
+                    self.assertTrue(button.winfo_ismapped(), label)
+                    self.assertGreaterEqual(button.winfo_rootx(),
+                                            self.root.winfo_rootx(), label)
+                    self.assertLessEqual(
+                        button.winfo_rootx() + button.winfo_width(),
+                        self.root.winfo_rootx() + available, label)
+                    self.assertGreaterEqual(button.winfo_width(), 70, label)
+
+    def test_native_confidentiality_and_no_raw_case_text(self):
+        self.open()
+        self.select_matter()
+        visible = [self.root.title()]
+        for widget in self.widgets:
+            if isinstance(widget, (ttk.Label, ttk.Button)):
+                visible.append(str(widget.cget('text')))
+            elif isinstance(widget, tk.Listbox):
+                visible.extend(widget.get(0, 'end'))
+        flat = ' '.join(visible)
+        for secret in ('PRIVATE FICTITIOUS CASE', 'SECRET PRIVATE TASK',
+                       'SECRET SOURCE', 'SECRET EXCERPT',
+                       self.mid, self.reviewer):
+            self.assertNotIn(secret, flat)
+        self.assertIn('OFFLINE EXPERIMENTAL WORKFLOW', flat)
+
     def test_reviewer_viewer_native_action_control_disabled(self):
         self.open(self.viewer)
         self.select_matter()
