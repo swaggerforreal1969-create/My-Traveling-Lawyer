@@ -95,8 +95,8 @@ class LocalOperatorController:
         eid, oid = self._reviews[position]
         self._recovery = None
         try:
-            self.operator.decide_review(self._token, self._matter_id,
-                                        eid, oid, decision, note)
+            committed = self.operator.decide_review(self._token, self._matter_id,
+                                                    eid, oid, decision, note)
         except RefreshUnresolved as uncertain:
             if uncertain.operation == 'source.second_review' and uncertain.record_id:
                 self._recovery = (uncertain.operation, uncertain.record_id)
@@ -107,7 +107,17 @@ class LocalOperatorController:
         except (Denied, Invalid, Stale, EvidenceInvalid):
             self._tasks, self._reviews = (), ()
             raise
-        self.refresh()
+        try:
+            self.refresh()
+        except Exception:
+            # The delegated operation committed. A later presentation read
+            # must not turn success into an apparent failed write. Preserve the
+            # exact record for one optional actor-authorized read-only check.
+            self._recovery = ('source.second_review', committed.record_id)
+            self._tasks, self._reviews = (), ()
+            return ActionFeedback(
+                'committed_refresh_unresolved',
+                'Review committed, display refresh unresolved. Do NOT repeat.')
         return ActionFeedback('review_committed', 'Review recorded. Readiness refreshed.')
 
     def complete(self, position, confirmed):
@@ -127,10 +137,19 @@ class LocalOperatorController:
         }
         if result.status not in allowed:
             raise Invalid('Unrecognized completion state')
-        if result.status != 'committed_refresh_unresolved':
-            self.refresh()
-        else:
+        if result.status == 'committed_refresh_unresolved':
             self._tasks, self._reviews = (), ()
+            return ActionFeedback(result.status, allowed[result.status])
+        try:
+            self.refresh()
+        except Exception:
+            self._tasks, self._reviews = (), ()
+            if result.status == 'completed_and_refreshed':
+                return ActionFeedback(
+                    'committed_refresh_unresolved',
+                    'Task committed; display refresh unresolved. Do NOT repeat.')
+            return ActionFeedback('unresolved_no_write',
+                                  'Read-only state refresh unresolved; no new write.')
         return ActionFeedback(result.status, allowed[result.status])
 
     def reconcile_last_review(self):
