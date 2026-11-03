@@ -18,3 +18,13 @@
 - These new tests are **published, not executed/verified** in this milestone. Do not count them as pass until complete exit 0 is observed.
 - Full exact-SHA Linux CI and permitted Chromium also remain unverified. No bypass of ERR_BLOCKED_BY_ADMINISTRATOR.
 - Next: execute focused plus full regression in authorized complete checkout, review a race between task read and simultaneous writer, acquire independent reviewer for ten originals, and obtain permissioned CI/browser evidence.
+
+## Follow-up engineering verification attempt
+- Checked Issue #1 again: no named reviewer or approved restricted-source migration.
+- Verified d5837470def85e8079da7a118cd35cf35b72968d was the then-current head without newer commits. Opened draft PR #2 against engineering/real-research-task-journey-20261103, not main; draft remains not for merge.
+- Added pull_request workflow trigger for the engineering parent, leaving all 42 required file/hash checks unchanged.
+- Improved AttorneyResearchWorkflow.complete_task to distinguish a successfully committed task write from a failed subsequent read: raises RefreshUnresolved('task.complete') and never retries the task write.
+- Added real-core regression case exercising failed post-commit refresh, exactly one audit task.complete event, read-only observed completion, and stale replay rejection.
+- The seven existing reconciliation tests and the newly added integration case remain UNVERIFIED. The accessible environment had no private repository checkout or direct GitHub network access. GitHub commit-run lookup and combined status returned no recorded run or passing status; this does NOT show that CI succeeded or that no push run exists.
+- Browser acceptance still unverified and no administrator-policy bypass attempted. Complete 42-file gate cannot pass while ten restricted originals are missing.
+- Next gate: acquire permitted same-SHA runner, inspect fast test outcomes; inspect and repair demonstrated failures, then run complete regression and strict gate without shrinking its requirements. Obtain independent security Issue #1 disposition before restricted originals can be published.
