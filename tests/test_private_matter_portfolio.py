@@ -24,8 +24,8 @@ class PrivateMatterPortfolioTests(unittest.TestCase):
         self.second=self.core.create_matter(self.owner,"PRIVATE SECOND CASE TITLE")["id"]
         self.hidden=self.core.create_matter(self.owner,"PRIVATE HIDDEN CASE")["id"]
         for i,mid in enumerate((self.first,self.second)):
-            self.core.grant(self.owner,mid,self.editor_id,"editor",10+i)
-            self.core.grant(self.owner,mid,self.reader_id,"viewer",20+i)
+            self.core.grant(self.owner,mid,self.editor_id,"editor",1)
+            self.core.grant(self.owner,mid,self.reader_id,"viewer",2)
             self.core.create_task(self.owner,mid,"SECRET PRIVATE TASK "+str(i),
                                   "2026-10-01T00:00:00Z")
         self.operator=PrivateAttorneyOperator(self.core)
