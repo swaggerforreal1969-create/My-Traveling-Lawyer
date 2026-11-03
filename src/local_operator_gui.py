@@ -35,11 +35,16 @@ class LocalOperatorController:
         self._reviews = ()
         self._recovery = None
 
+    def _assert_no_uncertain_review(self):
+        if self._recovery is not None:
+            self._tasks, self._reviews = (), ()
+            raise Invalid('Resolve pending review using read-only reconciliation first')
+
     def _clear(self):
+        self._assert_no_uncertain_review()
         self._matter_id = None
         self._tasks = ()
         self._reviews = ()
-        self._recovery = None
 
     def list_matters(self):
         # The previous matter list is not authority after a revoked session.
@@ -76,7 +81,12 @@ class LocalOperatorController:
             queue = self.operator.reviewer_inbox(self._token, mid)
             reviews = tuple((item['evidence_id'], item['observation_id'])
                             for item in queue['items'])
-        self._tasks, self._reviews = tasks, reviews
+        if self._recovery is not None:
+            # Refresh is allowed for observational purposes only. Pending
+            # uncertainty must never repopulate actionable row selections.
+            self._tasks, self._reviews = (), ()
+        else:
+            self._tasks, self._reviews = tasks, reviews
         return screen
 
     def refresh(self):
@@ -91,6 +101,7 @@ class LocalOperatorController:
     def review(self, position, decision, note, confirmed):
         if not confirmed:
             return ActionFeedback('cancelled', 'Cancelled; no write performed.')
+        self._assert_no_uncertain_review()
         if type(position) is not int or not 0 <= position < len(self._reviews):
             raise Invalid('Invalid review selection')
         if decision not in ('corroborated_manually', 'needs_further_review', 'rejected'):
@@ -127,6 +138,7 @@ class LocalOperatorController:
     def complete(self, position, confirmed):
         if not confirmed:
             return ActionFeedback('cancelled', 'Cancelled; no write performed.')
+        self._assert_no_uncertain_review()
         if type(position) is not int or not 0 <= position < len(self._tasks):
             raise Invalid('Invalid task selection')
         task_id, version = self._tasks[position]
