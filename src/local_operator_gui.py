@@ -173,24 +173,24 @@ def launch_gui(core, token, *, run_mainloop=True):
     root.title('Private Attorney — Local Operator')
     root.geometry('760x650')
     root.minsize(580, 520)
-    outer = ttk.Frame(root, padding=20)
+    outer = ttk.Frame(root, padding=14)
     outer.pack(fill='both', expand=True)
     ttk.Label(outer, text='Private attorney operator',
               font=('TkDefaultFont', 18, 'bold')).pack(anchor='w')
     ttk.Label(outer, text='OFFLINE EXPERIMENTAL WORKFLOW — NOT VERIFIED LAW OR FILING APPROVAL',
-              wraplength=650).pack(anchor='w', pady=(3, 12))
+              wraplength=500).pack(anchor='w', pady=(2, 5))
     status = tk.StringVar(value='Select a matter. No credentials or client text shown.')
-    ttk.Label(outer, textvariable=status, wraplength=660).pack(anchor='w')
+    ttk.Label(outer, textvariable=status, wraplength=500).pack(anchor='w')
     panels = ttk.Frame(outer)
-    panels.pack(fill='both', expand=True, pady=10)
+    panels.pack(fill='both', expand=True, pady=4)
     panels.columnconfigure((0,1,2), weight=1, uniform='private-work')
     panels.rowconfigure(1,weight=1)
     ttk.Label(panels,text='Authorized matters').grid(row=0,column=0,sticky='w')
     ttk.Label(panels,text='Second-human reviews').grid(row=0,column=1,sticky='w')
     ttk.Label(panels,text='Open tasks').grid(row=0,column=2,sticky='w')
-    matter_list = tk.Listbox(panels, exportselection=False, font=('TkDefaultFont',12))
-    review_list = tk.Listbox(panels, exportselection=False, font=('TkDefaultFont',12))
-    task_list = tk.Listbox(panels, exportselection=False, font=('TkDefaultFont',12))
+    matter_list = tk.Listbox(panels, exportselection=False, height=4, font=('TkDefaultFont',12))
+    review_list = tk.Listbox(panels, exportselection=False, height=4, font=('TkDefaultFont',12))
+    task_list = tk.Listbox(panels, exportselection=False, height=4, font=('TkDefaultFont',12))
     for col, control in enumerate((matter_list,review_list,task_list)):
         control.grid(row=1,column=col,sticky='nsew',padx=4)
     actions = ttk.Frame(outer)
@@ -201,10 +201,10 @@ def launch_gui(core, token, *, run_mainloop=True):
         values=('corroborated_manually','needs_further_review','rejected'))
     decisions.pack(fill='x')
     ttk.Label(actions,text='Second-human note (15–1200 characters)').pack(anchor='w',pady=(8,0))
-    note = tk.Text(actions,height=3,wrap='word')
+    note = tk.Text(actions,height=2,wrap='word')
     note.pack(fill='x')
     buttons = ttk.Frame(actions)
-    buttons.pack(fill='x', pady=8)
+    buttons.pack(fill='x', pady=3)
     buttons.columnconfigure((0, 1, 2), weight=1)
 
     def update_controls():
@@ -353,7 +353,7 @@ def launch_gui(core, token, *, run_mainloop=True):
     ttk.Label(outer, text='Keyboard: Alt+M matter, Alt+R reviews, '
               'Alt+T tasks, Alt+N note, Alt+V record review, '
               'Alt+K complete task, Alt+F refresh.',
-              wraplength=670).pack(anchor='w')
+              wraplength=500).pack(anchor='w')
     matter_list.bind('<<ListboxSelect>>', lambda event: update_controls())
     review_list.bind('<<ListboxSelect>>', lambda event: update_controls())
     task_list.bind('<<ListboxSelect>>', lambda event: update_controls())
