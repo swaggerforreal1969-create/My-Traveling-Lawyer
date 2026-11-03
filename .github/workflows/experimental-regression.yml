@@ -111,6 +111,10 @@ jobs:
         run: |
           python -m py_compile src/checkpoint_admission_prototype.py tests/test_checkpoint_admission_prototype.py
           python -m unittest discover -s tests -p 'test_checkpoint_admission_prototype.py' -q
+      - name: Provider-neutral separate-process custody acceptance
+        run: |
+          python -m py_compile src/provider_neutral_custody_client.py tests/test_provider_neutral_custody_client.py
+          python -m unittest discover -s tests -p 'test_provider_neutral_custody_client.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
