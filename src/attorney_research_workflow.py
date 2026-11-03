@@ -13,6 +13,7 @@ from .research_evidence import ResearchEvidence
 from .source_observation import SourceObservation
 from .second_source_review import SecondSourceReview
 from .task_reconciliation import reconcile_task
+from .task_completion_preflight import prepare_completion
 
 
 class RefreshUnresolved(RuntimeError):
@@ -70,6 +71,10 @@ class AttorneyResearchWorkflow:
     def reconcile_completion(self, token, matter_id, task_id, expected_version):
         """Read-only recovery: no automatic retry after uncertain completion."""
         return reconcile_task(self.core, token, matter_id, task_id, expected_version)
+
+    def completion_preflight(self, token, matter_id, task_id, expected_version):
+        """Minimal editor-only readiness to attempt an atomic task completion."""
+        return prepare_completion(self.core, token, matter_id, task_id, expected_version)
 
     def complete_task(self, token, matter_id, task_id, expected_version, *, now=None):
         # Separate the delegated atomic completion from presentation refresh.
