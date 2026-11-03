@@ -127,6 +127,22 @@ class PrivateMatterPortfolioTests(unittest.TestCase):
             with self.subTest(forged=forged):
                 with self.assertRaises(Invalid):render_portfolio_plain(forged)
 
+    def test_real_terminal_portfolio_command_is_read_only(self):
+        from src.local_operator_cli import LocalOperatorConsole
+        answers=iter(["P","0"])
+        output=[]
+        LocalOperatorConsole(
+            self.core,read=lambda prompt:next(answers),
+            write=output.append).run(self.editor)
+        rendered="\\n".join(output)
+        self.assertIn("PRIVATE ATTORNEY MATTER PORTFOLIO",rendered)
+        self.assertIn("Open user-entered tasks: 2",rendered)
+        for secret in ("PRIVATE FIRST CASE","PRIVATE SECOND CASE",
+                       self.first,self.second,self.editor):
+            self.assertNotIn(secret,rendered)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM tasks WHERE completed=1").fetchone()[0],0)
+
     def test_repeated_reads_do_not_grant_task_write_authority(self):
         snapshot=self.operator.portfolio(self.reader)
         self.assertFalse(snapshot.items[0].may_act)
