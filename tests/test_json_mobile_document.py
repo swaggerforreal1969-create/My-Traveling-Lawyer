@@ -70,6 +70,22 @@ class MobileDocumentTests(unittest.TestCase):
     def test_deny_cacheable_response(self):
         r=example();r.headers=tuple((k,'public' if k=='Cache-Control' else v) for k,v in r.headers)
         with self.assertRaises(UnsafeReadinessDocument):render_authenticated_readiness(r)
+    def test_reject_cache_substring_disguised_as_directive(self):
+        r=example()
+        r.headers=tuple((k,'not-no-store' if k=='Cache-Control' else v) for k,v in r.headers)
+        with self.assertRaises(UnsafeReadinessDocument):render_authenticated_readiness(r)
+
+    def test_reject_conflicting_public_or_age_directives(self):
+        for value in ('public, no-store', 'max-age=3600, no-store', 'no-store, s-maxage=100'):
+            r=example()
+            r.headers=tuple((k,value if k=='Cache-Control' else v) for k,v in r.headers)
+            with self.subTest(cache=value),self.assertRaises(UnsafeReadinessDocument):render_authenticated_readiness(r)
+
+    def test_accept_explicit_private_nostore_directives(self):
+        r=example()
+        r.headers=tuple((k,'private, no-store, no-cache, must-revalidate' if k=='Cache-Control' else v) for k,v in r.headers)
+        self.assertIn(b'Private matter readiness',render_authenticated_readiness(r).html)
+
     def test_deny_mismatched_length(self):
         r=example();r.headers=tuple((k,'5' if k=='Content-Length' else v) for k,v in r.headers)
         with self.assertRaises(UnsafeReadinessDocument):render_authenticated_readiness(r)
