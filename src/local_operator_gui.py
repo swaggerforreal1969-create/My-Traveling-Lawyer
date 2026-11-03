@@ -255,9 +255,25 @@ def launch_gui(core, token, *, run_mainloop=True):
                        ' • reviews awaiting a second human: '+str(screen.pending_second_review_count))
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Authorization or state changed. Reauthenticate.')
-            task_list.delete(0,'end')
-            review_list.delete(0,'end')
+            clear_stale_actions()
         update_controls()
+
+    def clear_stale_actions():
+        # Reject stale on-screen selections after any denied action. A user's
+        # next attempt must begin with a separately authorized refresh.
+        review_list.delete(0, 'end')
+        task_list.delete(0, 'end')
+        update_controls()
+
+    def notify_uncertain_result(result):
+        if result.status == 'committed_refresh_unresolved':
+            # A modal acknowledgement makes an irreversible committed outcome
+            # visible and keyboard-accessible without automatically replaying.
+            messagebox.showwarning(
+                'Write committed — refresh unresolved',
+                result.message + '\\nDo not repeat the action. '
+                'Use authorized read-only recovery if available.',
+                parent=root)
 
     def submit_review():
         if not review_list.curselection(): return
@@ -277,9 +293,10 @@ def launch_gui(core, token, *, run_mainloop=True):
                 task_list.delete(0,'end')
             status.set(result.message)
             update_controls()
+            notify_uncertain_result(result)
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Review rejected: stale, unauthorized or invalid; no retry.')
-            review_list.delete(0,'end')
+            clear_stale_actions()
 
     def submit_task():
         if not task_list.curselection(): return
@@ -296,9 +313,10 @@ def launch_gui(core, token, *, run_mainloop=True):
                 review_list.delete(0,'end')
             status.set(result.message)
             update_controls()
+            notify_uncertain_result(result)
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Task rejected: unauthorized or stale. Reopen read-only.')
-            task_list.delete(0,'end')
+            clear_stale_actions()
 
     def recover():
         try:
