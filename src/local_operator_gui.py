@@ -405,6 +405,49 @@ def launch_gui(core, token, *, run_mainloop=True):
             status.set('Workload unavailable or access changed. Reauthenticate.')
         update_controls()
 
+    def privacy_check():
+        """Periodic authorization is observational; a denial removes visible work.
+
+        This is a bounded local visibility measure, not instantaneous
+        revocation, an external custody assertion, or a new write grant.
+        """
+        try:
+            current = controller.operator.portfolio_summary(controller._token)
+            # An already displayed portfolio must not retain old counts after
+            # an authorized matter-index/task-count change.
+            existing = portfolio_text.get('1.0', 'end-1c')
+            if existing.startswith('PRIVATE ATTORNEY MATTER PORTFOLIO'):
+                if current != existing:
+                    clear_all_visible_work()
+                    portfolio_text.configure(state='normal')
+                    portfolio_text.insert('1.0', current)
+                    portfolio_text.configure(state='disabled')
+        except Exception:
+            # Unexpected failures are denial for display purposes. Preserve
+            # the controller's durable and in-memory recovery identity.
+            clear_all_visible_work()
+            status.set('Private work hidden. Reauthenticate before continuing.')
+        update_controls()
+
+    def privacy_tick():
+        if not root.winfo_exists():
+            return
+        privacy_check()
+        root.after(2000, privacy_tick)
+
+    def privacy_window_hidden(event):
+        # Toplevel unmapping/minimizing invalidates the visible session.
+        # Ordinary focus changes among child controls must NOT clear data.
+        if event.widget is root:
+            clear_all_visible_work()
+            status.set('Private work hidden while window is not visible.')
+
+    # Exposed solely for deterministic native GUI acceptance without waiting
+    # on wall-clock timers. Every invocation performs real backend checking.
+    root.privacy_check = privacy_check
+    root.bind('<Unmap>', privacy_window_hidden, add='+')
+    root.after(2000, privacy_tick)
+
     def refresh_lists():
         clear_portfolio()
         try:
