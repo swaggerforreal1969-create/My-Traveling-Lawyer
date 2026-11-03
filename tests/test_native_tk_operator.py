@@ -139,6 +139,24 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                         button.winfo_rootx() + button.winfo_width(),
                         self.root.winfo_rootx() + available, label)
                     self.assertGreaterEqual(button.winfo_width(), 70, label)
+                    # A mapped button may still lie below the clipped window:
+                    # inspect vertical screen coordinates, not just mapped state.
+                    self.assertGreaterEqual(button.winfo_rooty(),
+                                            self.root.winfo_rooty(), label)
+                    self.assertLessEqual(
+                        button.winfo_rooty() + button.winfo_height(),
+                        self.root.winfo_rooty() + self.root.winfo_height(), label)
+                for widget in self.widgets:
+                    if isinstance(widget, ttk.Label) and (
+                        'EXPERIMENTAL WORKFLOW' in str(widget.cget('text')) or
+                        'Keyboard:' in str(widget.cget('text'))
+                    ):
+                        self.assertLessEqual(
+                            widget.winfo_rooty() + widget.winfo_height(),
+                            self.root.winfo_rooty() + self.root.winfo_height())
+                        self.assertLessEqual(
+                            widget.winfo_rootx() + widget.winfo_width(),
+                            self.root.winfo_rootx() + self.root.winfo_width())
 
     def test_native_confidentiality_and_no_raw_case_text(self):
         self.open()
