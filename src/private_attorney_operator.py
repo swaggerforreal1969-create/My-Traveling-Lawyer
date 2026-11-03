@@ -7,6 +7,7 @@ All writes delegate to existing independently authorized transactional services.
 from dataclasses import dataclass
 from .attorney_research_workflow import AttorneyResearchWorkflow
 from .secure_engine import Denied, Invalid
+from .private_operator_document import render_private_operator
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,10 @@ class PrivateAttorneyOperator:
                 pending_second_review_count=count,
                 can_complete_tasks=view['can_complete_tasks'],
             )
+
+    def open_accessible_summary(self, token, matter_id, *, now=None):
+        """Reauthorize a local screen before rendering a script-free page."""
+        return render_private_operator(self.select_matter(token, matter_id, now=now))
 
     def reviewer_inbox(self, token, matter_id):
         return self.workflow.pending_second_reviews(token, matter_id)
