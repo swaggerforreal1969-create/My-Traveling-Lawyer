@@ -107,6 +107,10 @@ jobs:
         run: |
           python -m py_compile src/independent_checkpoint_boundary.py tests/test_independent_checkpoint_boundary.py
           python -m unittest discover -s tests -p 'test_independent_checkpoint_boundary.py' -q
+      - name: Offline atomic checkpoint admission adversarial acceptance
+        run: |
+          python -m py_compile src/checkpoint_admission_prototype.py tests/test_checkpoint_admission_prototype.py
+          python -m unittest discover -s tests -p 'test_checkpoint_admission_prototype.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
