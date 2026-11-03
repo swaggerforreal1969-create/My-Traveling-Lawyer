@@ -74,6 +74,10 @@ jobs:
         run: |
           python -m py_compile src/private_operator_document.py tests/test_accessible_private_operator.py
           python -m unittest discover -s tests -p 'test_accessible_private_operator.py' -q
+      - name: Keyboard-driven local attorney operator acceptance
+        run: |
+          python -m py_compile src/local_operator_cli.py tests/test_local_operator_cli.py
+          python -m unittest discover -s tests -p 'test_local_operator_cli.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
