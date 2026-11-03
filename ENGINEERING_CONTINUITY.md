@@ -1,39 +1,29 @@
-# My Traveling Lawyer — preserved engineering continuity
-Date: 2026-11-03
-Branch: engineering/v1.4-preserved-handoff
-Source of truth for local handoff: my-traveling-lawyer-v1.4-local-handoff.zip (preserved conversation artifact; NOT yet committed in full).
+# My Traveling Lawyer engineering continuity — v1.3 (2026-11-03)
 
-## Proven historical baseline
-- v1.3 full regression: 244/244 passed in 16.767 seconds (prior run).
-- v1.3 HTTP tests: 52 in 4.845 seconds after reducing ThreadingHTTPServer shutdown poll from 0.5s to 0.01s.
-- v1.4 adds authenticated matter-restricted research evidence notebook; 48 focused HTTP tests passed.
-- v1.4 full regression timed out; do not claim it passes.
-- v1.4 source path locally: src/research_evidence.py; routes GET/POST /api/matters/{id}/research in src/secure_server.py.
-- Research excerpts are user-supplied, unverified, hash-digested for local integrity; not legal authenticity.
-- Standards-based WebAuthn/passkey: NOT implemented. Experimental Ed25519 step-up is not WebAuthn.
-- Browser acceptance: NOT verified. 24/7 hosted AI: NOT configured.
-- Sovereign Confidential Mode, firm/matter ACLs, and fictional-template outbound AI boundary are required.
-- Real client data must not be used. Do not deploy, merge or change permissions.
+## Local checkpoint
+- Original v1.2 archived without modification: `/mnt/data/my-traveling-lawyer-v1.2-github-ready.zip`.
+- Worktree based on v1.2. Separate from Diezel and Koontcee; no main branch or production change.
+- HTTP regression timeout root cause: `ThreadingHTTPServer.serve_forever` used its inherited 0.5s shutdown polling interval; repeated setup/teardown increased aggregate wall time. APIServer now sets the default poll interval to 0.01s. Existing HTTP integration suite: 52 tests, 4.845 seconds measured after correction.
+- Demo device-key revocation added: POST `/api/device/revoke` requires a valid current bearer credential matching the key owner; invalidates the key and deletes outstanding challenges in the same DB transaction, records an audit event. Cross-firm and stale-key revocation denied. The revocation API has an end-to-end HTTP regression test.
+- Full final suite: `python -m unittest discover -s tests -q` => 244 tests passed in 16.767 seconds. Python compilation and package integrity to be recorded separately.
+- Browser acceptance: NOT PASSED. Playwright package installed, but Chromium executable unavailable in this runtime. Earlier environment denied localhost.
+- Production WebAuthn/passkey enrollment/login: NOT IMPLEMENTED. `device_challenge.py` remains experimental Ed25519 step-up, not WebAuthn. Do not mistake it for browser-origin-bound passkeys.
+- 24/7 external AI: NOT HOSTED. Confidential case prompts remain blocked for external AI. Fictional data only.
 
-## Repository reconciliation
-- Connected private repository: swaggerforreal1969-create/My-Traveling-Lawyer.
-- Main is an initialization-only README at 5a4216d1b23d1eeb2059851a8be657c86f972edf.
-- Branch engineering/v1.4-preserved-handoff was created from that SHA.
-- This continuity entry does NOT mean the v1.4 code archive has been fully uploaded or verified as GitHub source.
+## GitHub status
+- Connected GitHub repository searches returned no accessible private `My-Traveling-Lawyer` repository.
+- No branch, commit SHA, CI evidence, or successful source publication. Next dependency: create private `My-Traveling-Lawyer` in the connected GitHub account and grant connector access, then publish sanitized source on `engineering/continuity-v1-3` and verify branch SHA.
+- Do not alter any frozen originals or other repositories.
 
-## Next work
-1. Publish sanitized full local archive on this engineering branch; verify exact HEAD, source tree and CI.
-2. Diagnose v1.4 full-suite regression timeout in isolation, without assuming HTTP fix applies to all tests.
-3. Implement maintained WebAuthn RP/origin-bound registration/assertion verification with genuine browser acceptance, then secure sessions.
-4. Add verifiable research source retrieval with attorney approval; independent audit custody; monitoring for 24/7 AI.
+## Next engineering priority
+- Integrate a **maintained** WebAuthn verification library and a complete registration/authentication ceremony: trusted HTTPS origin/RP ID, challenge expiry, credential ID and signature validation, user verification, one-time replay defense, counters/backup behavior, and session issuance after verified assertion. Enforce staff/matter permissions and authentication recovery carefully.
+- Obtain permitted genuine browser acceptance on a trusted environment. Configure independent audit checkpoint custody, encryption at rest and hosting before real client data. 
+- Five subjective milestone estimates unchanged: M1 90%, M2 62%, M3 40%, M4 20%, M5 0%; reported overall planning estimate 42%. This is not an audited completion percentage.
 
-Planning only: M1 90%, M2 62%, M3 40%, M4 20%, M5 0%; overall stated ~42% (milestone arithmetic unweighted average 42.4%). Not production readiness.
 
-## Acceptance engineering increment — 2026-11-03
-- Branch preserves 32/42 archived application files; 10 missing paths and digests documented in BLOCKED_SOURCE_ACCEPTANCE_2026-11-03.md. Migration incomplete.
-- SOURCE_V14_SHA256.json records all 42 original SHA-256 hashes. tools/verify_source_manifest.py rejects missing, symlinked, modified, and traversing paths. tests/test_source_manifest_gate.py: 6/6 local tests passed. Fresh original extraction: 42/42 integrity matched; deliberate tamper rejected.
-- CI workflow runs the immutable hash check before full Linux regression and installs cryptography. It cannot pass until all files are present and exact hashes reconcile.
-- Chromium launched through Playwright, but navigation was blocked by ERR_BLOCKED_BY_ADMINISTRATOR. No genuine browser acceptance claimed.
-- No successful GitHub CI observed; WebAuthn verifier and hosted 24/7 AI are not yet available.
-- Temporary Library transfer copies removed. Main, original archive, and unrelated engines preserved.
-- Next: security-approved publication of 10 missing originals, complete exact-SHA Linux/browser gate, then genuine passkeys and attorney workflows.
+## v1.4 local continuation (2026-11-03)
+- GitHub repository searches again returned no connected private My-Traveling-Lawyer repository; no branch/commit/CI.
+- Added authenticated per-matter research evidence notebook in src/research_evidence.py and GET/POST /api/matters/{id}/research. Role-scoped; HTTPS URL validation; source excerpts user-supplied and explicitly unverified; no outbound retrieval or AI transfer.
+- Focused research test module: 48 tests passing, including inherited HTTP tests. Full suite execution timed out during this turn and is NOT verified for v1.4.
+- Standards-based WebAuthn remains unimplemented. Neither webauthn nor fido2 packages are available locally. Do not claim passkey login or browser acceptance.
+- Sovereign Confidential Mode and opt-in fictional-template AI preserved. No production deployment.
