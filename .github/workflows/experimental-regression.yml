@@ -66,6 +66,10 @@ jobs:
         run: |
           python -m py_compile src/attorney_research_workflow.py tests/test_review_inbox_action.py
           python -m unittest discover -s tests -p 'test_review_inbox_action.py' -q
+      - name: Private attorney operator complete journey acceptance
+        run: |
+          python -m py_compile src/private_attorney_operator.py tests/test_private_attorney_operator.py
+          python -m unittest discover -s tests -p 'test_private_attorney_operator.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
