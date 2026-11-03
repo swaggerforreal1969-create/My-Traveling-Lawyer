@@ -172,6 +172,44 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.assertEqual(cl.reconcile_last_review().status,'observed_local_commit')
         self.assertEqual(self.audit_count('research.second_source_review'),1)
 
+    def test_reconciliation_proof_survives_second_display_refresh_failure(self):
+        cl=self.select()
+        with patch.object(cl.operator.workflow,'open',
+                          side_effect=RuntimeError('Lost readiness display')):
+            initial=cl.review(0,'corroborated_manually',
+                'Fictional independent manual verification note',True)
+        self.assertEqual(initial.status,'committed_refresh_unresolved')
+        self.assertTrue(cl.has_recovery())
+        with patch.object(cl,'refresh',
+                          side_effect=RuntimeError('Display refresh unavailable')):
+            observed=cl.reconcile_last_review()
+        self.assertEqual(observed.status,'observed_local_commit_refresh_unresolved')
+        self.assertIn('Independent custody not verified', observed.message)
+        self.assertFalse(cl.has_recovery())
+        self.assertEqual(cl.counts(),(0,0))
+        self.assertEqual(self.audit_count('research.second_source_review'),1)
+        self.assertEqual(cl.refresh().pending_second_review_count,0)
+        self.assertEqual(self.audit_count('research.second_source_review'),1)
+
+    def test_unresolved_read_only_reconcile_does_not_invent_commit_confirmation(self):
+        cl=self.select()
+        with patch.object(cl.operator.workflow,'open',
+                          side_effect=RuntimeError('Lost readiness display')):
+            cl.review(0,'corroborated_manually',
+                'Fictional independent manual verification note',True)
+        self.assertTrue(cl.has_recovery())
+        from types import SimpleNamespace
+        with patch.object(cl.operator,'reconcile_research',
+                          return_value=SimpleNamespace(status='unresolved')):
+            reply=cl.reconcile_last_review()
+        self.assertEqual(reply.status,'reconciliation_unresolved')
+        self.assertTrue(cl.has_recovery())
+        self.assertEqual(cl.counts(),(0,0))
+        self.assertEqual(self.audit_count('research.second_source_review'),1)
+        confirmed=cl.reconcile_last_review()
+        self.assertEqual(confirmed.status,'observed_local_commit')
+        self.assertEqual(self.audit_count('research.second_source_review'),1)
+
     def test_second_refresh_failure_after_committed_task_never_retries(self):
         cl=self.select()
         with patch.object(cl,'refresh',side_effect=RuntimeError('Local window refresh failed')):
