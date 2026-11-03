@@ -2,6 +2,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from src.secure_engine import SecureCore, Denied, Invalid
 from src.research_evidence import EvidenceInvalid
@@ -133,6 +134,45 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
                   'Human approved imaginary source',True)
         self.core.revoke_token(self.reviewer)
         with self.assertRaises(Denied):cl.reconcile_last_review()
+
+
+    def test_second_refresh_failure_after_committed_review_is_recoverable(self):
+        cl=self.select()
+        with patch.object(cl,'refresh',side_effect=RuntimeError('Local window refresh failed')):
+            outcome=cl.review(0,'corroborated_manually',
+                 'Independent human reviewed fictitious material',True)
+        self.assertEqual(outcome.status,'committed_refresh_unresolved')
+        self.assertTrue(cl.has_recovery())
+        self.assertEqual(cl.counts(),(0,0))
+        self.assertEqual(self.audit_count('research.second_source_review'),1)
+        recovered=cl.reconcile_last_review()
+        self.assertEqual(recovered.status,'observed_local_commit')
+        self.assertFalse(cl.has_recovery())
+        self.assertEqual(self.audit_count('research.second_source_review'),1)
+        self.assertTrue(self.core.verify_audit())
+
+    def test_second_refresh_failure_after_committed_task_never_retries(self):
+        cl=self.select()
+        with patch.object(cl,'refresh',side_effect=RuntimeError('Local window refresh failed')):
+            result=cl.complete(0,True)
+        self.assertEqual(result.status,'committed_refresh_unresolved')
+        self.assertEqual(cl.counts(),(0,0))
+        self.assertEqual(self.audit_count('task.complete'),1)
+        self.assertFalse(cl.has_recovery())
+        self.assertEqual(cl.refresh().open_task_count,0)
+        self.assertEqual(self.audit_count('task.complete'),1)
+
+    def test_cancelled_actions_and_invalid_selection_do_not_gain_auth(self):
+        cl=self.select()
+        self.assertEqual(cl.review(0,'forged','short',False).status,'cancelled')
+        self.assertEqual(cl.complete(0,False).status,'cancelled')
+        self.assertEqual(self.audit_count('task.complete'),0)
+        self.assertEqual(self.audit_count('research.second_source_review'),0)
+        with self.assertRaises(Invalid):cl.select(-1)
+        with self.assertRaises(Invalid):cl.review(True,'corroborated_manually',
+                                  'An imaginary human review note',True)
+        self.assertEqual(self.audit_count('research.second_source_review'),0)
+
 
 
 if __name__=='__main__':
