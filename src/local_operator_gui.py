@@ -344,14 +344,6 @@ def launch_gui(core, token, *, run_mainloop=True):
     task_list = tk.Listbox(panels, exportselection=False, height=4, font=('TkDefaultFont',12))
     for col, control in enumerate((matter_list,review_list,task_list)):
         control.grid(row=1,column=col,sticky='nsew',padx=4)
-    # Privacy-safe observational panel. No case data, tokens or internal IDs.
-    portfolio_panel = ttk.LabelFrame(outer, text='Authorized workload — read only')
-    portfolio_panel.pack(fill='x', pady=(4, 2))
-    portfolio_text = tk.Text(portfolio_panel, height=5, wrap='word',
-                             font=('TkDefaultFont', 11), takefocus=True)
-    portfolio_text.pack(fill='x')
-    portfolio_text.insert('1.0', 'Select Workload to reauthorize current counts.')
-    portfolio_text.configure(state='disabled')
     actions = ttk.Frame(outer)
     actions.pack(fill='x')
     choice = tk.StringVar(value='corroborated_manually')
@@ -362,6 +354,14 @@ def launch_gui(core, token, *, run_mainloop=True):
     ttk.Label(actions,text='Second-human note (15–1200 characters)').pack(anchor='w',pady=(8,0))
     note = tk.Text(actions,height=2,wrap='word')
     note.pack(fill='x')
+    # Privacy-safe observational panel. No case data, tokens or internal IDs.
+    portfolio_panel = ttk.LabelFrame(outer, text='Authorized workload — read only')
+    portfolio_panel.pack(fill='x', pady=(4, 2))
+    portfolio_text = tk.Text(portfolio_panel, height=3, wrap='word',
+                             font=('TkDefaultFont', 11), takefocus=True)
+    portfolio_text.pack(fill='x')
+    portfolio_text.insert('1.0', 'Select Workload to reauthorize current counts.')
+    portfolio_text.configure(state='disabled')
     buttons = ttk.Frame(actions)
     buttons.pack(fill='x', pady=3)
     buttons.columnconfigure((0, 1, 2), weight=1)
