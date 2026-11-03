@@ -126,6 +126,38 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(self.listboxes[1].size(),0)
         self.assertEqual(self.listboxes[2].size(),0)
 
+    def test_idle_revocation_hides_open_portfolio_and_disables_actions(self):
+        self.open()
+        self.buttons['Workload (read only)'].invoke()
+        self.assertIn('Open user-entered tasks: 1',
+                      self.texts[1].get('1.0', 'end-1c'))
+        self.core.revoke_token(self.reviewer)
+        self.root.privacy_check()
+        self.assertEqual(self.texts[1].get('1.0', 'end-1c'), '')
+        self.assertTrue(all(widget.size() == 0 for widget in self.listboxes))
+        self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
+
+    def test_idle_matter_change_clears_previous_counts(self):
+        self.open()
+        self.buttons['Workload (read only)'].invoke()
+        before = self.texts[1].get('1.0', 'end-1c')
+        self.core.create_task(self.author, self.mid, 'Fictional additional task',
+                              '2026-10-01T00:00:00Z')
+        self.root.privacy_check()
+        after = self.texts[1].get('1.0', 'end-1c')
+        self.assertNotEqual(before, after)
+        self.assertIn('Open user-entered tasks: 2', after)
+        self.assertNotIn('SECRET PRIVATE TASK', after)
+
+    def test_raised_authorization_error_hides_stale_window_content(self):
+        self.open()
+        self.buttons['Workload (read only)'].invoke()
+        from src.secure_engine import Denied
+        with patch.object(self.core, '_identity', side_effect=Denied('revoked')):
+            self.root.privacy_check()
+        self.assertEqual(self.texts[1].get('1.0', 'end-1c'), '')
+        self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
+
     def test_alt_p_keyboard_shortcut_opens_portfolio(self):
         self.open()
         self.root.focus_force()
