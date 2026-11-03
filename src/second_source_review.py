@@ -37,7 +37,12 @@ class SecondSourceReview:
             reviewer = self.core._identity(token)
             self.core._role(reviewer, matter_id, ('owner', 'editor'))
             # Verify the original source and every observation before relying on it.
-            self.observations.history(token, matter_id, evidence_id)
+            history = self.observations.history(token, matter_id, evidence_id)
+            latest = max(history['observations'],
+                         key=lambda item: (item['recorded_at'], item['observation_id']),
+                         default=None)
+            if latest is None or latest['observation_id'] != observation_id:
+                raise EvidenceInvalid('Review requires latest source observation')
             row = self.core.db.execute('''SELECT * FROM source_observation
                 WHERE observation_id=? AND matter_id=? AND evidence_id=?''',
                 (observation_id, matter_id, evidence_id)).fetchone()
