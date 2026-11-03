@@ -90,7 +90,6 @@ jobs:
       - name: Capture three synthetic-only native Tk PNG screenshots
         run: |
           command -v xvfb-run
-          command -v import
           python -m py_compile tests/capture_native_tk_screenshots.py
           PYTHONPATH=. xvfb-run -a python tests/capture_native_tk_screenshots.py
       - name: Retain synthetic-only screenshots for independent visual inspection
