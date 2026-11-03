@@ -55,8 +55,9 @@ class RealProviderReadinessTests(unittest.TestCase):
         self.addCleanup(patcher2.stop)
 
     def active(self,**kw):
-        return PinnedHTTPSCustodyAdapter(
-            endpoint=ENDPOINT,certificate_sha256=PIN,enabled=True,**kw)
+        args={"endpoint":ENDPOINT,"certificate_sha256":PIN,"enabled":True}
+        args.update(kw)
+        return PinnedHTTPSCustodyAdapter(**args)
 
     def test_disabled_default_cannot_contact_network(self):
         adapter=PinnedHTTPSCustodyAdapter()
