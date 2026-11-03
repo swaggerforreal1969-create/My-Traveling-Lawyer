@@ -30,6 +30,7 @@ class LocalOperatorController:
     def __init__(self, core, token, *, durable_fence=None):
         self.operator = PrivateAttorneyOperator(core)
         self._durable_fence = durable_fence
+        self._reservation = None  # never exposed in ActionFeedback
         self._token = token
         self._matter_id = None
         self._matters = ()
@@ -127,7 +128,7 @@ class LocalOperatorController:
                 self.operator.core._role(actor, self._matter_id, ('owner', 'editor'))
                 tip = self.operator.core.db.execute(
                     'SELECT COALESCE(MAX(seq),0) FROM audit_chain').fetchone()[0]
-            self._durable_fence.begin(
+            self._reservation = self._durable_fence.begin(
                 review_identity=(actor['id'], self._matter_id, eid, oid),
                 audit_before=tip)  # intent is committed BEFORE the write
         self._recovery = None
@@ -144,7 +145,9 @@ class LocalOperatorController:
             self._tasks, self._reviews = (), ()
             raise
         if self._durable_fence is not None:
-            self._durable_fence.finish_confirmed()
+            self._durable_fence.finish_confirmed(
+                expected_reservation=self._reservation)
+            self._reservation = None
         try:
             self.refresh()
         except Exception:
@@ -166,7 +169,7 @@ class LocalOperatorController:
             raise Invalid('Invalid task selection')
         task_id, version = self._tasks[position]
         if self._durable_fence is not None:
-            self._durable_fence.begin()  # committed BEFORE the real write
+            self._reservation = self._durable_fence.begin()  # before write
         self._recovery = None
         # Any exception, ambiguous outcome, or crash leaves the fence pending.
         result = self.operator.complete_task(
@@ -183,7 +186,9 @@ class LocalOperatorController:
             self._tasks, self._reviews = (), ()
             return ActionFeedback(result.status, allowed[result.status])
         if self._durable_fence is not None:
-            self._durable_fence.finish_confirmed()
+            self._durable_fence.finish_confirmed(
+                expected_reservation=self._reservation)
+            self._reservation = None
         try:
             self.refresh()
         except Exception:
@@ -207,6 +212,7 @@ class LocalOperatorController:
                 or self._matter_id is None):
             raise Invalid('No restart recovery available')
         self._tasks, self._reviews = (), ()
+        reservation = self._durable_fence.pending_reservation()
         core = self.operator.core
         with core.lock:
             actor=core._identity(self._token)
@@ -245,7 +251,8 @@ class LocalOperatorController:
                 return ActionFeedback(
                     'reconciliation_unresolved',
                     'Review reconciliation unresolved; no write permitted.')
-            self._durable_fence.finish_confirmed()
+            self._durable_fence.finish_confirmed(
+                expected_reservation=reservation)
             self._recovery=None
         try:
             self.refresh()
@@ -278,7 +285,9 @@ class LocalOperatorController:
                 'Review reconciliation unresolved. Do NOT repeat the write.')
         self._recovery = None
         if self._durable_fence is not None and self._durable_fence.is_pending():
-            self._durable_fence.finish_confirmed()
+            self._durable_fence.finish_confirmed(
+                expected_reservation=self._reservation)
+            self._reservation = None
         try:
             self.refresh()
         except Exception:
