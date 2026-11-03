@@ -55,12 +55,14 @@ class LocalWriteFence:
                         state TEXT NOT NULL CHECK(state='pending'),
                         kind TEXT NOT NULL DEFAULT 'unknown',
                         salt TEXT, fingerprint TEXT,
-                        audit_before INTEGER)""")
+                        audit_before INTEGER,
+                        reservation TEXT)""")
                     existing={entry[1] for entry in db.execute('PRAGMA table_info(fence)')}
                     for name, sql in (
                         ('kind', "TEXT NOT NULL DEFAULT 'unknown'"),
                         ('salt', 'TEXT'), ('fingerprint', 'TEXT'),
-                        ('audit_before', 'INTEGER')
+                        ('audit_before', 'INTEGER'),
+                        ('reservation', 'TEXT')
                     ):
                         if name not in existing:
                             db.execute(f'ALTER TABLE fence ADD COLUMN {name} {sql}')
@@ -134,6 +136,7 @@ class LocalWriteFence:
                     or not all(isinstance(i,str) and i for i in review_identity)
                     or type(audit_before) is not int or audit_before < 0):
                 raise Denied('Invalid review reservation; no write permitted')
+        reservation = token_hex(32)  # exact per-write CAS identity; never displayed
         salt = token_hex(24) if review_identity is not None else None
         fingerprint = (self._fingerprint(salt, review_identity)
                        if review_identity is not None else None)
@@ -146,11 +149,12 @@ class LocalWriteFence:
                     db.execute('ROLLBACK')
                     raise Denied('A prior write is unresolved; no writes permitted')
                 db.execute('''INSERT INTO fence
-                    (slot,state,kind,salt,fingerprint,audit_before)
-                    VALUES(1,'pending',?,?,?,?)''',
+                    (slot,state,kind,salt,fingerprint,audit_before,reservation)
+                    VALUES(1,'pending',?,?,?,?,?)''',
                     ('review' if review_identity is not None else 'unknown',
-                     salt, fingerprint, audit_before))
+                     salt, fingerprint, audit_before, reservation))
                 db.execute('COMMIT')
+                return reservation
         except Denied:
             raise
         except (sqlite3.Error, OSError) as error:
@@ -184,22 +188,53 @@ class LocalWriteFence:
         except (sqlite3.Error,OSError) as error:
             raise Denied('Recovery reservation unreadable') from error
 
-    def finish_confirmed(self):
-        """Only call when the operation outcome is DEFINITIVELY known.
+    def pending_reservation(self):
+        """Return only an opaque local CAS version, not authorization evidence.
 
-        A crash between commit and clearance intentionally leaves a pending
-        fence. No auto-clear on reboot, timeout, startup, or uncertain result.
+        Existing pre-version reservations deliberately require incident review;
+        missing/corrupt identifiers may never be upgraded or auto-cleared.
         """
         self._verify_binding()
         try:
             with self._connection() as db:
+                rows=db.execute(
+                    'SELECT reservation FROM fence WHERE slot=1').fetchall()
+                if len(rows)!=1 or not isinstance(rows[0][0],str):
+                    raise Denied('No versioned reservation available')
+                value=rows[0][0]
+                if len(value)!=64 or any(ch not in '0123456789abcdef'
+                                      for ch in value):
+                    raise Denied('Invalid reservation version')
+                return value
+        except Denied:
+            raise
+        except (sqlite3.Error,OSError) as error:
+            raise Denied('Reservation unavailable') from error
+
+    def finish_confirmed(self, *, expected_reservation):
+        """Exact-version CAS clearance after actor-authorized outcome proof.
+
+        No wildcard, missing-version or automatic clearing is supported.
+        This protects against a stale operator clearing a newer pending write,
+        not against coordinated SQLite rollback or a malicious local writer.
+        """
+        if (not isinstance(expected_reservation,str)
+                or len(expected_reservation)!=64
+                or any(ch not in '0123456789abcdef'
+                       for ch in expected_reservation)):
+            raise Denied('Exact reservation identity required')
+        self._verify_binding()
+        try:
+            with self._connection() as db:
                 db.execute('BEGIN IMMEDIATE')
-                if db.execute('SELECT count(*) FROM fence').fetchone()[0] != 1:
+                deleted=db.execute(
+                    'DELETE FROM fence WHERE slot=1 AND state=? AND reservation=?',
+                    ('pending',expected_reservation))
+                if deleted.rowcount!=1:
                     db.execute('ROLLBACK')
-                    raise Denied('Write fence missing or corrupted')
-                db.execute('DELETE FROM fence WHERE slot=1')
+                    raise Denied('Reservation changed; clearance denied')
                 db.execute('COMMIT')
         except Denied:
             raise
-        except (sqlite3.Error, OSError) as error:
-            raise Denied('Unable to clear write fence; further writes denied') from error
+        except (sqlite3.Error,OSError) as error:
+            raise Denied('Unable to clear exact reservation') from error
