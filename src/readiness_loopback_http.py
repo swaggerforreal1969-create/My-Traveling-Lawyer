@@ -65,8 +65,32 @@ class LoopbackReadinessHandler(BaseHTTPRequestHandler):
         # Exact header match; no alternate name, DNS rebinding, or port ambiguity.
         return host == expected
 
+    def _headers_unambiguous(self):
+        """Deny HTTP parser disagreement before validating or burning a ticket.
+
+        Duplicate Host, authorization or ticket fields can be interpreted
+        differently by upstream parsers. This prototype rejects *all* duplicate
+        field names rather than choosing a winning value. It also refuses
+        proxy/routing headers and excessive fields. No header values are logged.
+        """
+        items = list(self.headers.items())
+        if len(items) > 32:
+            return False
+        names = [name.casefold() for name, _ in items]
+        if len(names) != len(set(names)):
+            return False
+        if any(name in names for name in (
+                'proxy-authorization', 'proxy-connection', 'forwarded',
+                'x-forwarded-host', 'x-forwarded-for', 'x-forwarded-proto',
+                'x-original-url', 'x-rewrite-url', 'expect')):
+            return False
+        return all(len(name) <= 64 and len(value) <= 2048 and
+                   all(32 <= ord(ch) <= 126 or ch == '\t' for ch in value)
+                   for name, value in items)
+
     def do_GET(self):
-        if (not self._host_allowed() or self.headers.get('Origin') is not None or
+        if (not self._headers_unambiguous() or not self._host_allowed() or
+                self.headers.get('Origin') is not None or
                 self.headers.get('Referer') is not None or self.headers.get('Cookie') is not None or
                 self.headers.get('Transfer-Encoding') is not None or self.headers.get('Content-Length') is not None):
             return self._deny()
