@@ -15,6 +15,8 @@ from .second_source_review import SecondSourceReview
 from .task_reconciliation import reconcile_task
 from .task_completion_preflight import prepare_completion
 from .research_write_recovery import reconcile_research_write
+from .source_release_projection import SourceReleaseProjection
+from .research_evidence import EvidenceInvalid
 
 
 class RefreshUnresolved(RuntimeError):
@@ -78,6 +80,44 @@ class AttorneyResearchWorkflow:
     def second_review(self, token, matter_id, evidence_id, observation_id, decision, note, *, now=None):
         result = self.reviews.record(token, matter_id, evidence_id, observation_id, decision, note)
         return self._after_commit('source.second_review', result['review_id'], token, matter_id, now=now)
+
+    def pending_second_reviews(self, token, matter_id):
+        """Small, authorized and integrity-checked private work queue.
+
+        Lists only the latest reviewable observation IDs, never excerpts,
+        titles, notes or URLs. This snapshot is advisory: review.record must
+        re-check the latest version and current authorization at commit time.
+        """
+        with self.core.lock:
+            actor = self.core._identity(token)
+            self.core._role(actor, matter_id, ('owner', 'editor'))
+            if not self.core.verify_audit():
+                raise EvidenceInvalid('Local audit verification failed')
+            projection = SourceReleaseProjection(self.core).project(token, matter_id)
+            if projection.get('schema') != 'mtl.source.review_projection.v1':
+                raise EvidenceInvalid('Unsafe source projection')
+            result = []
+            for entry in projection['sources']:
+                if entry['procedural_status'] != 'needs_independent_second_review':
+                    continue
+                eid, oid = entry['evidence_id'], entry['latest_observation_id']
+                if oid is None:
+                    raise EvidenceInvalid('Unbound review queue entry')
+                history = self.observations.history(token, matter_id, eid)['observations']
+                latest = max(history, key=lambda x: (x['recorded_at'], x['observation_id']),
+                             default=None)
+                if latest is None or latest['observation_id'] != oid:
+                    raise EvidenceInvalid('Stale review queue projection')
+                if latest['actor_id'] == actor['id']:
+                    continue
+                result.append({'evidence_id': eid, 'observation_id': oid,
+                               'status': 'needs_independent_second_review'})
+            return {'schema': 'mtl.private.review.queue.v1',
+                    'items': result,
+                    'official_source_authenticated': False,
+                    'legal_authority_current': False,
+                    'court_filing_approved': False,
+                    'independent_audit_verified': False}
 
     def reconcile_research(self, token, matter_id, operation, record_id):
         """Read-only, actor-specific local recovery of one research write."""
