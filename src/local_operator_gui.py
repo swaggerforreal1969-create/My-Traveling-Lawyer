@@ -158,8 +158,23 @@ class LocalOperatorController:
         operation, record_id = self._recovery
         result = self.operator.reconcile_research(
             self._token, self._matter_id, operation, record_id)
+        # Only an authenticated, independently scoped reconciliation response
+        # may resolve uncertainty. Refreshing the visible task list is a
+        # separate read and must never reverse the observed recovery result.
+        if result.status != 'observed_local_commit':
+            self._tasks, self._reviews = (), ()
+            return ActionFeedback(
+                'reconciliation_unresolved',
+                'Review reconciliation unresolved. Do NOT repeat the write.')
         self._recovery = None
-        self.refresh()
+        try:
+            self.refresh()
+        except Exception:
+            self._tasks, self._reviews = (), ()
+            return ActionFeedback(
+                'observed_local_commit_refresh_unresolved',
+                'Local review commit observed; display still unresolved. '
+                'Independent custody not verified. Do NOT repeat.')
         return ActionFeedback('observed_local_commit',
                               'Local review commit observed; independent custody not verified.')
 
@@ -334,6 +349,12 @@ def launch_gui(core, token, *, run_mainloop=True):
             display_counts()
             status.set(result.message)
             update_controls()
+            if result.status in (
+                    'reconciliation_unresolved',
+                    'observed_local_commit_refresh_unresolved'):
+                messagebox.showwarning(
+                    'Review recovery requires attention',
+                    result.message, parent=root)
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Read-only recovery unresolved. Do NOT repeat the write.')
             update_controls()
