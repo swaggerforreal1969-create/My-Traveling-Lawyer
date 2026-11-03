@@ -62,6 +62,34 @@ class OfficialSourceTests(unittest.TestCase):
   socket.socket.connect=blocked
   try:self.capture()
   finally:socket.socket.connect=original
+ def test_history_rejects_source_excerpt_modified_without_digest_update(self):
+  self.capture()
+  self.c.db.execute('UPDATE research_evidence SET excerpt=? WHERE id=?',('forged content',self.e))
+  with self.assertRaises(EvidenceInvalid):self.s.list_records(self.t,self.m,self.e)
+ def test_history_rejects_source_title_modified_without_digest_update(self):
+  self.capture()
+  self.c.db.execute('UPDATE research_evidence SET title=? WHERE id=?',('forged title',self.e))
+  with self.assertRaises(EvidenceInvalid):self.s.list_records(self.t,self.m,self.e)
+ def test_history_rejects_source_url_modified_without_digest_update(self):
+  self.capture()
+  self.c.db.execute('UPDATE research_evidence SET url=? WHERE id=?',('https://attacker.example/fake',self.e))
+  with self.assertRaises(EvidenceInvalid):self.s.list_records(self.t,self.m,self.e)
+ def test_history_rejects_changed_source_digest(self):
+  self.capture()
+  self.c.db.execute('UPDATE research_evidence SET content_digest=? WHERE id=?',('00'*32,self.e))
+  with self.assertRaises(EvidenceInvalid):self.s.list_records(self.t,self.m,self.e)
+ def test_history_rejects_replaced_source_even_with_new_self_consistent_digest(self):
+  import hashlib,json
+  self.capture()
+  replacement=['Replacement case','https://example.org/replacement','Fabricated replacement']
+  digest=hashlib.sha256(json.dumps(replacement,separators=(',',':')).encode()).hexdigest()
+  self.c.db.execute("UPDATE research_evidence SET title=?,url=?,excerpt=?,content_digest=? WHERE id=?",(*replacement,digest,self.e))
+  with self.assertRaises(EvidenceInvalid):self.s.list_records(self.t,self.m,self.e)
+ def test_history_of_unmodified_source_remains_readable(self):
+  self.capture()
+  history=self.s.list_records(self.v,self.m,self.e)
+  self.assertEqual(1,len(history['records']))
+  self.assertFalse(history['official_source_authenticated'])
  def test_restart_persistence(self):
   self.capture();self.c.close();self.c=SecureCore(self.path)
   s=OfficialSourceIntake(self.c,['opinions.example.gov'])
