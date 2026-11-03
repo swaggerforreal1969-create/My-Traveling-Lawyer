@@ -123,6 +123,10 @@ jobs:
         run: |
           python -m py_compile src/offline_trust_rotation.py tests/test_offline_trust_rotation.py
           python -m unittest discover -s tests -p 'test_offline_trust_rotation.py' -q
+      - name: Offline rotation replay and cross-process CAS acceptance
+        run: |
+          python -m py_compile src/offline_rotation_ledger.py tests/test_offline_rotation_ledger.py
+          python -m unittest discover -s tests -p 'test_offline_rotation_ledger.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
