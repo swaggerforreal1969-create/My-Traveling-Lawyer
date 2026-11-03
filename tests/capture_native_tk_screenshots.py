@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
 import json
-import shutil
-import subprocess
+import ctypes
+import ctypes.util
+import struct
+import zlib
 import tempfile
 
 from src.secure_engine import SecureCore
@@ -16,10 +18,70 @@ from src.attorney_research_workflow import AttorneyResearchWorkflow
 from src.local_operator_gui import launch_gui
 
 
+def _png_chunk(kind, contents):
+    data = kind + contents
+    return (struct.pack("!I", len(contents)) + data +
+            struct.pack("!I", zlib.crc32(data) & 0xffffffff))
+
+
+def _native_x11_png(root, output):
+    """Read pixels from this synthetic Tk window through existing libX11.
+
+    Xvfb on hosted Linux is truecolor 24-bit with RGB component masks.
+    This does not create a network listener, install dependencies or
+    capture other applications.
+    """
+    library = ctypes.util.find_library("X11")
+    if not library:
+        raise RuntimeError("SCREENSHOT NOT CAPTURED: libX11 unavailable")
+    x11 = ctypes.CDLL(library)
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XGetImage.argtypes = [ctypes.c_void_p, ctypes.c_ulong,
+                             ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+                             ctypes.c_uint, ctypes.c_ulong, ctypes.c_int]
+    x11.XGetImage.restype = ctypes.c_void_p
+    x11.XGetPixel.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    x11.XGetPixel.restype = ctypes.c_ulong
+    x11.XDestroyImage.argtypes = [ctypes.c_void_p]
+    x11.XDestroyImage.restype = ctypes.c_int
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    x11.XCloseDisplay.restype = ctypes.c_int
+    display = x11.XOpenDisplay(None)
+    if not display:
+        raise RuntimeError("SCREENSHOT NOT CAPTURED: graphical display unavailable")
+    image = None
+    try:
+        width, height = root.winfo_width(), root.winfo_height()
+        if root.winfo_depth() < 24 or root.winfo_visual() != "truecolor":
+            raise RuntimeError("SCREENSHOT NOT CAPTURED: unsupported X visual")
+        image = x11.XGetImage(display, int(root.winfo_id()), 0, 0,
+                             width, height, ctypes.c_ulong(-1).value, 2)
+        if not image:
+            raise RuntimeError("SCREENSHOT NOT CAPTURED: XGetImage failed")
+        rows = []
+        for y in range(height):
+            pixels = bytearray(width * 3 + 1)
+            for x in range(width):
+                px = x11.XGetPixel(image, x, y)
+                offset = 1 + x * 3
+                pixels[offset] = (px >> 16) & 255
+                pixels[offset + 1] = (px >> 8) & 255
+                pixels[offset + 2] = px & 255
+            rows.append(bytes(pixels))
+        body = zlib.compress(b"".join(rows), level=6)
+        output.write_bytes(
+            b"\x89PNG\r\n\x1a\n" +
+            _png_chunk(b"IHDR", struct.pack("!IIBBBBB",
+                       width, height, 8, 2, 0, 0, 0)) +
+            _png_chunk(b"IDAT", body) + _png_chunk(b"IEND", b""))
+    finally:
+        if image:
+            x11.XDestroyImage(image)
+        x11.XCloseDisplay(display)
+
+
 def capture_fictional_windows(destination):
-    capture_tool = shutil.which("import")
-    if capture_tool is None:
-        raise RuntimeError("SCREENSHOT NOT CAPTURED: approved ImageMagick import unavailable")
     folder = Path(destination)
     folder.mkdir(parents=True, exist_ok=True)
     records = []
@@ -65,8 +127,7 @@ def capture_fictional_windows(destination):
                     raise RuntimeError("Native Tk window geometry differs from requested size")
                 out = folder / f"fictional_operator_{w}x{h}.png"
                 # A read-only capture of the visible synthetic Tk window.
-                subprocess.run([capture_tool, "-window", str(root.winfo_id()),
-                                str(out)], check=True, timeout=20, capture_output=True)
+                _native_x11_png(root, out)
                 data = out.read_bytes()
                 if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) < 1024:
                     raise RuntimeError("Screenshot missing or not a valid PNG")
