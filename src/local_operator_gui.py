@@ -276,8 +276,17 @@ def launch_gui(core, token, *, run_mainloop=True):
                 parent=root)
 
     def submit_review():
-        if not review_list.curselection(): return
-        human_note=note.get('1.0','end-1c')
+        if not review_list.curselection():
+            status.set('Select a current human-review item before continuing.')
+            review_list.focus_set()
+            return
+        human_note = note.get('1.0', 'end-1c')
+        # Reject incomplete notes before soliciting a legally consequential
+        # confirmation. The backend retains its independent validation.
+        if not 15 <= len(human_note.strip()) <= 1200:
+            status.set('Review note must contain 15–1200 characters. No write performed.')
+            note.focus_set()
+            return
         if not messagebox.askyesno('Confirm second-human review',
                                    'Record this one review? No automatic retry.'):
             status.set('Cancelled; no write performed.')
@@ -297,6 +306,7 @@ def launch_gui(core, token, *, run_mainloop=True):
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Review rejected: stale, unauthorized or invalid; no retry.')
             clear_stale_actions()
+            review_list.focus_set()
 
     def submit_task():
         if not task_list.curselection(): return
@@ -341,7 +351,8 @@ def launch_gui(core, token, *, run_mainloop=True):
     # Standard Tab and arrow navigation remain intact. Named keyboard
     # shortcuts offer direct access without inventing active web controls.
     ttk.Label(outer, text='Keyboard: Alt+M matter, Alt+R reviews, '
-              'Alt+T tasks, Alt+N review note, Alt+F refresh.',
+              'Alt+T tasks, Alt+N note, Alt+V record review, '
+              'Alt+K complete task, Alt+F refresh.',
               wraplength=670).pack(anchor='w')
     matter_list.bind('<<ListboxSelect>>', lambda event: update_controls())
     review_list.bind('<<ListboxSelect>>', lambda event: update_controls())
@@ -350,6 +361,10 @@ def launch_gui(core, token, *, run_mainloop=True):
     root.bind('<Alt-r>', lambda event: review_list.focus_set())
     root.bind('<Alt-t>', lambda event: task_list.focus_set())
     root.bind('<Alt-n>', lambda event: note.focus_set())
+    root.bind('<Alt-v>', lambda event: submit_review()
+              if str(review_button.cget('state')) != 'disabled' else None)
+    root.bind('<Alt-k>', lambda event: submit_task()
+              if str(task_button.cget('state')) != 'disabled' else None)
     root.bind('<Alt-f>', lambda event: display_counts()
               if str(refresh_button.cget('state')) != 'disabled' else None)
     matter_list.bind('<Return>', lambda event: select_matter())
