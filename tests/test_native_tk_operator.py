@@ -68,6 +68,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
 
     def select_matter(self):
         self.listboxes[0].selection_set(0)
+        self.listboxes[0].event_generate('<<ListboxSelect>>')
         self.root.update()
         self.buttons['Select matter'].invoke()
         self.root.update()
@@ -83,6 +84,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(self.listboxes[1].size(), 1)
         self.assertEqual(self.listboxes[2].size(), 1)
         self.listboxes[1].selection_set(0)
+        self.listboxes[1].event_generate('<<ListboxSelect>>')
         self.root.update()
         self.assertEqual(str(self.buttons['Record review'].cget('state')), 'normal')
         self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
@@ -94,6 +96,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.open()
         self.select_matter()
         self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
         self.root.update()
         self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'normal')
         with patch.object(messagebox, 'askyesno', return_value=False) as ask:
