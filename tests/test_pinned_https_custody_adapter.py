@@ -12,15 +12,19 @@ ENDPOINT="https://custody.example.org"
 
 
 class FakeResponse:
-    def __init__(self,status=200,contents=None,ctype="application/json"):
+    def __init__(self,status=200,contents=None,ctype="application/json",headers=None):
         self.status=status
+        self.custom_headers=headers
         self.contents=(json.dumps({"sequence":1,"head_digest":"f"*64}).encode()
                        if contents is None else contents)
         self.ctype=ctype
+    def getheaders(self):
+        return (self.custom_headers if self.custom_headers is not None else
+                [("Content-Type",self.ctype),
+                 ("Content-Length",str(len(self.contents)))])
     def getheader(self,key,default=None):
-        if key=="Content-Type":return self.ctype
-        if key=="Content-Length":return str(len(self.contents))
-        return default
+        return next((value for name,value in self.getheaders()
+                     if name.lower()==key.lower()),default)
     def read(self,size):
         return self.contents[:size]
 
@@ -90,7 +94,14 @@ class RealProviderReadinessTests(unittest.TestCase):
                     "https://127.0.0.1","https://custody.example.org/path",
                     "https://user:password@custody.example.org",
                     "https://custody.example.org:444/",
-                    "https://custody.example.org?x=y"):
+                    "https://custody.example.org?x=y",
+                    "https://10.0.0.2","https://[::1]",
+                    "https://169.254.169.254",
+                    "https://custody.local","https://custody.internal",
+                    "https://custody.example.org.",
+                    "https://custody.example.org:bad",
+                    "https://custody.example.org:65536",
+                    "https://sub..example.org"):
             with self.subTest(url=url),self.assertRaises(Denied):
                 PinnedHTTPSCustodyAdapter(endpoint=url,
                                          certificate_sha256=PIN,enabled=True)
@@ -107,6 +118,43 @@ class RealProviderReadinessTests(unittest.TestCase):
         with self.assertRaises(Denied):self.active()("read_head",{})
         self.connection.response=FakeResponse(contents=b"\xff")
         with self.assertRaises(Denied):self.active()("read_head",{})
+
+    def test_duplicate_casefolded_headers_fail_closed(self):
+        self.connection.response=FakeResponse(headers=[
+            ("Content-Type","application/json"),
+            ("content-type","application/json"),
+            ("Content-Length","30")])
+        with self.assertRaises(Denied):self.active()("read_head",{})
+
+    def test_chunked_or_compressed_responses_fail_closed(self):
+        for key,val in (("Transfer-Encoding","chunked"),
+                        ("Content-Encoding","gzip")):
+            self.connection.response=FakeResponse(headers=[
+                ("Content-Type","application/json"),(key,val)])
+            with self.subTest(key=key),self.assertRaises(Denied):
+                self.active()("read_head",{})
+
+    def test_inconsistent_content_length_rejected(self):
+        self.connection.response=FakeResponse(headers=[
+            ("Content-Type","application/json"),("Content-Length","1")])
+        with self.assertRaises(Denied):self.active()("read_head",{})
+        self.connection.response=FakeResponse(headers=[
+            ("Content-Type","application/json"),("Content-Length","-1")])
+        with self.assertRaises(Denied):self.active()("read_head",{})
+
+    def test_nonfinite_json_and_invalid_charset_fail_closed(self):
+        self.connection.response=FakeResponse(contents=b'{"amount":NaN}')
+        with self.assertRaises(Denied):self.active()("read_head",{})
+        self.connection.response=FakeResponse(ctype="application/json; charset=latin1")
+        with self.assertRaises(Denied):self.active()("read_head",{})
+
+    def test_dns_substitution_still_requires_pinned_leaf(self):
+        # Resolver-independent pin check: even a successful TLS connection to
+        # a substituted address cannot send a credential with another cert.
+        self.connection.certificate=b"unapproved-certificate"
+        with self.assertRaises(Denied):
+            self.active()("admit",{"credential":"fictional-private-token"})
+        self.assertEqual([x for x in self.connection.called if isinstance(x,tuple)],[])
 
     def test_transport_error_fails_closed_without_retry(self):
         self.connection.connect=lambda: (_ for _ in ()).throw(OSError("no network"))
