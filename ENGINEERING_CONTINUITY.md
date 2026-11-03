@@ -28,3 +28,12 @@ Source of truth for local handoff: my-traveling-lawyer-v1.4-local-handoff.zip (p
 4. Add verifiable research source retrieval with attorney approval; independent audit custody; monitoring for 24/7 AI.
 
 Planning only: M1 90%, M2 62%, M3 40%, M4 20%, M5 0%; overall stated ~42% (milestone arithmetic unweighted average 42.4%). Not production readiness.
+
+## Acceptance engineering increment — 2026-11-03
+- Branch preserves 32/42 archived application files; 10 missing paths and digests documented in BLOCKED_SOURCE_ACCEPTANCE_2026-11-03.md. Migration incomplete.
+- SOURCE_V14_SHA256.json records all 42 original SHA-256 hashes. tools/verify_source_manifest.py rejects missing, symlinked, modified, and traversing paths. tests/test_source_manifest_gate.py: 6/6 local tests passed. Fresh original extraction: 42/42 integrity matched; deliberate tamper rejected.
+- CI workflow runs the immutable hash check before full Linux regression and installs cryptography. It cannot pass until all files are present and exact hashes reconcile.
+- Chromium launched through Playwright, but navigation was blocked by ERR_BLOCKED_BY_ADMINISTRATOR. No genuine browser acceptance claimed.
+- No successful GitHub CI observed; WebAuthn verifier and hosted 24/7 AI are not yet available.
+- Temporary Library transfer copies removed. Main, original archive, and unrelated engines preserved.
+- Next: security-approved publication of 10 missing originals, complete exact-SHA Linux/browser gate, then genuine passkeys and attorney workflows.
