@@ -65,8 +65,8 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                          and isinstance(w.cget('textvariable'), str)
                          and w.cget('textvariable')]
         self.assertEqual(len(self.listboxes), 3)
-        self.assertEqual(len(self.texts), 1)
-        self.assertEqual(len(self.buttons), 5)
+        self.assertEqual(len(self.texts), 2)
+        self.assertEqual(len(self.buttons), 6)
 
     def select_matter(self):
         self.listboxes[0].selection_set(0)
@@ -93,6 +93,48 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertNotIn('PRIVATE FICTITIOUS CASE',
                          ' '.join(w.get(0, 'end')[0] for w in self.listboxes if w.size()))
         self.assertNotIn('SECRET PRIVATE TASK', self.root.title())
+
+    def test_read_only_workload_button_reauthorizes_and_hides_selection(self):
+        self.open()
+        self.select_matter()
+        self.assertEqual(self.listboxes[2].size(), 1)
+        self.buttons['Workload (read only)'].invoke()
+        self.root.update()
+        self.assertEqual(self.listboxes[2].size(), 0)
+        self.assertEqual(self.listboxes[1].size(), 0)
+        self.assertEqual(self.listboxes[0].size(), 0)
+        summary=self.texts[1].get('1.0','end-1c')
+        self.assertIn('Open user-entered tasks: 1',summary)
+        self.assertIn('PRIVATE ATTORNEY MATTER PORTFOLIO',summary)
+        for secret in ('PRIVATE FICTITIOUS CASE','SECRET PRIVATE TASK',
+                       'SECRET SOURCE',self.mid,self.reviewer):
+            self.assertNotIn(secret,summary)
+        self.assertEqual(str(self.buttons['Complete task'].cget('state')),'disabled')
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM tasks WHERE completed=1').fetchone()[0],0)
+        self.buttons['Refresh'].invoke() if str(self.buttons['Refresh'].cget('state'))!='disabled' else None
+
+    def test_revoked_session_clears_prior_workload_without_leak(self):
+        self.open()
+        self.buttons['Workload (read only)'].invoke()
+        self.assertIn('Open user-entered tasks: 1',self.texts[1].get('1.0','end-1c'))
+        self.core.revoke_token(self.reviewer)
+        self.buttons['Workload (read only)'].invoke()
+        self.root.update()
+        self.assertEqual(self.texts[1].get('1.0','end-1c'),'')
+        self.assertEqual(self.listboxes[0].size(),0)
+        self.assertEqual(self.listboxes[1].size(),0)
+        self.assertEqual(self.listboxes[2].size(),0)
+
+    def test_alt_p_keyboard_shortcut_opens_portfolio(self):
+        self.open()
+        self.root.focus_force()
+        self.root.update()
+        self.root.event_generate('<Alt-p>')
+        self.root.update()
+        self.assertIn('PRIVATE ATTORNEY MATTER PORTFOLIO',
+                      self.texts[1].get('1.0','end-1c'))
+        self.assertEqual(self.root.focus_get(),self.texts[1])
 
     def test_real_confirm_dialog_rejection_has_zero_writes(self):
         self.open()
