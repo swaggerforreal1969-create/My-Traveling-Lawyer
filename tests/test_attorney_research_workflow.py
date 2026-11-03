@@ -77,6 +77,46 @@ class WorkflowIntegrationTests(unittest.TestCase):
                        'New observation supersedes prior review',now=self.now)
         self.assertIn(b'Second human review required',again.snapshot.readiness_html)
 
+    def test_stale_second_review_rejected_before_write_and_new_latest_accepted(self):
+        source = self.add()
+        old = self.workflow.observe(self.token, self.mid, source.record_id,
+                    'Older fictional evidence', 'Original manual human observation', now=self.now)
+        newer = self.workflow.observe(self.token, self.mid, source.record_id,
+                    'Newer fictional evidence', 'Superseding manual human observation', now=self.now)
+        before = self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.second_source_review'"
+        ).fetchone()[0]
+        with self.assertRaises(EvidenceInvalid):
+            self.workflow.second_review(self.second, self.mid, source.record_id,
+                old.record_id, 'corroborated_manually',
+                'Review of superseded observation must be rejected', now=self.now)
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 0)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.second_source_review'"
+        ).fetchone()[0], before)
+        accepted = self.workflow.second_review(self.second, self.mid, source.record_id,
+                newer.record_id, 'corroborated_manually',
+                'New latest observation was reviewed by second human', now=self.now)
+        self.assertIn(b'Two people reviewed; law unverified', accepted.snapshot.readiness_html)
+        self.assert_private(accepted.snapshot)
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 1)
+
+    def test_second_review_old_record_cannot_be_revived_by_wrong_matter(self):
+        source = self.add()
+        original = self.workflow.observe(self.token, self.mid, source.record_id,
+                'First fictional observation', 'Original fictional manual review note', now=self.now)
+        self.workflow.observe(self.token, self.mid, source.record_id,
+                'Second fictional observation', 'Updated fictional manual review note', now=self.now)
+        other = self.core.create_matter(self.token, 'Another fictional matter')['id']
+        with self.assertRaises((Denied, EvidenceInvalid)):
+            self.workflow.second_review(self.second, other, source.record_id,
+                original.record_id, 'corroborated_manually',
+                'Cross matter stale observation cannot be countersigned', now=self.now)
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 0)
+
     def test_viewer_cross_firm_and_revoked_denial(self):
         self.assert_private(self.workflow.open(self.viewer,self.mid,now=self.now))
         with self.assertRaises(Denied):
@@ -113,6 +153,26 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(self.core.db.execute('SELECT count(*) FROM research_evidence').fetchone()[0],before+1)
         self.assertEqual(self.core.db.execute("SELECT count(*) FROM audit_chain WHERE action='research.evidence_add'").fetchone()[0],1)
         self.assertEqual(len(self.workflow.open(self.token,self.mid,now=self.now).workbench['open_tasks']),1)
+
+    def test_task_completion_refresh_failure_is_explicitly_unresolved(self):
+        before=self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'").fetchone()[0]
+        with patch.object(self.workflow, 'open',
+                          side_effect=RuntimeError('Fictional lost refresh response')):
+            with self.assertRaises(RefreshUnresolved) as ctx:
+                self.workflow.complete_task(
+                    self.token, self.mid, self.task['id'], 1, now=self.now)
+        self.assertEqual(ctx.exception.operation, 'task.complete')
+        after=self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'").fetchone()[0]
+        self.assertEqual(after, before+1)
+        observation=self.workflow.reconcile_completion(
+            self.token, self.mid, self.task['id'], 1)
+        self.assertEqual(observation.status, 'observed_completed')
+        self.assertFalse(observation.independent_audit_verified)
+        with self.assertRaises(Stale):
+            self.workflow.complete_task(
+                self.token, self.mid, self.task['id'], 1, now=self.now)
 
     def _has_table(self):
         return bool(self.core.db.execute("SELECT 1 FROM sqlite_master WHERE name='research_evidence'").fetchone())
