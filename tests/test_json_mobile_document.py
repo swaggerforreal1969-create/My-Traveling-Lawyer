@@ -79,6 +79,26 @@ class MobileDocumentTests(unittest.TestCase):
     def test_deny_oversized_body(self):
         r=example();r.body+= b' '*8192
         with self.assertRaises(UnsafeReadinessDocument):render_authenticated_readiness(r)
+    def test_deny_duplicate_top_level_json_member(self):
+        r=example()
+        body=r.body.decode('utf-8')
+        # A permissive JSON parser would silently accept the final value.
+        body=body[:-1]+',"court_filing_approved":false}'
+        r.body=body.encode('utf-8')
+        r.headers=tuple((k,str(len(r.body)) if k=='Content-Length' else v) for k,v in r.headers)
+        with self.assertRaises(UnsafeReadinessDocument):
+            render_authenticated_readiness(r)
+
+    def test_deny_duplicate_nested_review_count(self):
+        r=example()
+        body=r.body.decode('utf-8').replace('"needs_first_observation": 1',
+                '"needs_first_observation": 1, "needs_first_observation": 1')
+        self.assertNotEqual(body.encode('utf-8'),r.body)
+        r.body=body.encode('utf-8')
+        r.headers=tuple((k,str(len(r.body)) if k=='Content-Length' else v) for k,v in r.headers)
+        with self.assertRaises(UnsafeReadinessDocument):
+            render_authenticated_readiness(r)
+
     def test_deny_malformed_json(self):
         r=example();r.body=b'{' ;r.headers=tuple((k,'1' if k=='Content-Length' else v) for k,v in r.headers)
         with self.assertRaises(UnsafeReadinessDocument):render_authenticated_readiness(r)
