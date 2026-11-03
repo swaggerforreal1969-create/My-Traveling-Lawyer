@@ -12,6 +12,8 @@ from .attorney_journey import AttorneyJourney
 from .research_evidence import ResearchEvidence
 from .source_observation import SourceObservation
 from .second_source_review import SecondSourceReview
+from .task_reconciliation import reconcile_task
+from .task_completion_preflight import prepare_completion
 
 
 class RefreshUnresolved(RuntimeError):
@@ -20,6 +22,15 @@ class RefreshUnresolved(RuntimeError):
     def __init__(self, operation):
         self.operation = operation
         super().__init__('Post-write readiness refresh unresolved; re-open read-only')
+
+
+@dataclass(frozen=True)
+class CompletionAction:
+    status: str
+    snapshot: object = None
+    legal_deadlines_verified: bool = False
+    court_filing_approved: bool = False
+    independent_audit_verified: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,7 +77,45 @@ class AttorneyResearchWorkflow:
         result = self.reviews.record(token, matter_id, evidence_id, observation_id, decision, note)
         return self._after_commit('source.second_review', result['review_id'], token, matter_id, now=now)
 
+    def reconcile_completion(self, token, matter_id, task_id, expected_version):
+        """Read-only recovery: no automatic retry after uncertain completion."""
+        return reconcile_task(self.core, token, matter_id, task_id, expected_version)
+
+    def completion_preflight(self, token, matter_id, task_id, expected_version):
+        """Minimal editor-only readiness to attempt an atomic task completion."""
+        return prepare_completion(self.core, token, matter_id, task_id, expected_version)
+
+    def complete_if_ready(self, token, matter_id, task_id, expected_version, *, now=None):
+        """One authorized operator action, not a grant or reusable preflight.
+
+        Preflight and the delegated atomic write share the same local core lock.
+        Another local thread cannot complete between those stages. The core
+        still checks authorization/version at the actual write; a stale client
+        cannot replay a task. Status is not proof of independently held custody.
+        """
+        with self.core.lock:
+            preflight = self.completion_preflight(
+                token, matter_id, task_id, expected_version)
+            if preflight.status == 'already_completed':
+                return CompletionAction('observed_completed_no_write')
+            if not preflight.can_attempt_completion:
+                return CompletionAction('unresolved_no_write')
+            # This is the only completion write in the operator action.
+            self.journey.workbench.complete(
+                token, matter_id, task_id, expected_version)
+        # Do not rerun completion when readiness cannot be refreshed.
+        try:
+            refreshed = self.open(token, matter_id, now=now)
+        except Exception:
+            return CompletionAction('committed_refresh_unresolved')
+        return CompletionAction('completed_and_refreshed', refreshed)
+
     def complete_task(self, token, matter_id, task_id, expected_version, *, now=None):
-        # Use the existing delegated task completion and post-commit refresh;
-        # it never retries the write after a failure to refresh.
-        return self.journey.complete_and_refresh(token, matter_id, task_id, expected_version, now=now)
+        # Separate the delegated atomic completion from presentation refresh.
+        # A committed completion must produce an explicit unresolved outcome if
+        # the subsequent read fails, never an invitation to replay the write.
+        self.journey.workbench.complete(token, matter_id, task_id, expected_version)
+        try:
+            return self.open(token, matter_id, now=now)
+        except Exception as exc:
+            raise RefreshUnresolved('task.complete') from exc
