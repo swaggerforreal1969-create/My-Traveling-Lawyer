@@ -93,7 +93,8 @@ class LoopbackReadinessHandler(BaseHTTPRequestHandler):
                    for name, value in items)
 
     def do_GET(self):
-        if (not self._headers_unambiguous() or not self._host_allowed() or
+        if (self.request_version != 'HTTP/1.1' or
+                not self._headers_unambiguous() or not self._host_allowed() or
                 self.headers.get('Origin') is not None or
                 self.headers.get('Referer') is not None or self.headers.get('Cookie') is not None or
                 self.headers.get('Transfer-Encoding') is not None or self.headers.get('Content-Length') is not None):
@@ -135,4 +136,13 @@ class LoopbackReadinessHandler(BaseHTTPRequestHandler):
         self._deny(405)
 
     def do_OPTIONS(self):
+        self._deny(405)
+
+    def do_PATCH(self):
+        self._deny(405)
+
+    def do_TRACE(self):
+        self._deny(405)
+
+    def do_CONNECT(self):
         self._deny(405)
