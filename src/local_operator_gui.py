@@ -536,6 +536,26 @@ def launch_gui(core, token, *, run_mainloop=True):
                 'Use authorized read-only recovery if available.',
                 parent=root)
 
+    def confirmation_still_current(kind, position, original_matter, identity):
+        """After modal event processing, require the exact authorized target.
+
+        Modal dialogs run nested Tk events; selection, ACL and source state
+        can change before the user's confirmation returns. Recheck before
+        issuing a write, with backend authorization still authoritative.
+        """
+        if controller._matter_id != original_matter:
+            raise Denied('Matter changed during confirmation')
+        controller._load_authorized_work()
+        if controller._matter_id != original_matter:
+            raise Denied('Matter changed during confirmation')
+        identities = controller._reviews if kind == 'review' else controller._tasks
+        widget = review_list if kind == 'review' else task_list
+        if (type(position) is not int or position < 0 or
+                position >= len(identities) or
+                identities[position] != identity or
+                tuple(widget.curselection()) != (position,)):
+            raise Stale('Selected action changed during confirmation')
+
     def submit_review():
         if not review_list.curselection():
             status.set('Select a current human-review item before continuing.')
@@ -548,13 +568,23 @@ def launch_gui(core, token, *, run_mainloop=True):
             status.set('Review note must contain 15–1200 characters. No write performed.')
             note.focus_set()
             return
+        position = review_list.curselection()[0]
+        original_matter = controller._matter_id
+        try:
+            identity = controller._reviews[position]
+        except (IndexError, TypeError):
+            clear_stale_actions()
+            return
+        decision = choice.get()
         if not messagebox.askyesno('Confirm second-human review',
                                    'Record this one review? No automatic retry.'):
             status.set('Cancelled; no write performed.')
             return
         try:
-            result=controller.review(review_list.curselection()[0], choice.get(),
-                                     human_note, True)
+            confirmation_still_current('review', position, original_matter, identity)
+            if choice.get() != decision or note.get('1.0', 'end-1c') != human_note:
+                raise Stale('Human review input changed during confirmation')
+            result=controller.review(position, decision, human_note, True)
             note.delete('1.0','end')
             if result.status == 'review_committed':
                 display_counts()
@@ -571,12 +601,20 @@ def launch_gui(core, token, *, run_mainloop=True):
 
     def submit_task():
         if not task_list.curselection(): return
+        position = task_list.curselection()[0]
+        original_matter = controller._matter_id
+        try:
+            identity = controller._tasks[position]
+        except (IndexError, TypeError):
+            clear_stale_actions()
+            return
         if not messagebox.askyesno('Confirm task completion',
                                    'Complete this one task? No automatic retry.'):
             status.set('Cancelled; no write performed.')
             return
         try:
-            result=controller.complete(task_list.curselection()[0], True)
+            confirmation_still_current('task', position, original_matter, identity)
+            result=controller.complete(position, True)
             if result.status != 'committed_refresh_unresolved':
                 display_counts()
             else:
