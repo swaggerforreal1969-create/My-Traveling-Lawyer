@@ -234,6 +234,53 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                       self.texts[1].get('1.0','end-1c'))
         self.assertEqual(self.root.focus_get(),self.texts[1])
 
+    def test_task_confirm_revocation_during_modal_has_no_write(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        def revoke(*args, **kwargs):
+            self.core.revoke_token(self.reviewer)
+            self.root.privacy_check()
+            return True
+        with patch.object(messagebox, 'askyesno', side_effect=revoke):
+            self.buttons['Complete task'].invoke()
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM tasks WHERE completed=1').fetchone()[0], 0)
+        self.assertEqual(self.listboxes[2].size(), 0)
+
+    def test_review_confirm_changed_decision_during_modal_has_no_write(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[1].selection_set(0)
+        self.listboxes[1].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        self.texts[0].insert('1.0', 'Fictional reviewed legal source carefully')
+        decisions = [w for w in self.widgets if isinstance(w, ttk.Combobox)]
+        self.assertEqual(len(decisions), 1)
+        def change_decision(*args, **kwargs):
+            decisions[0].set('rejected')
+            return True
+        with patch.object(messagebox, 'askyesno', side_effect=change_decision):
+            self.buttons['Record review'].invoke()
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 0)
+
+    def test_task_confirm_selection_removed_during_modal_has_no_write(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        def alter(*args, **kwargs):
+            self.listboxes[2].selection_clear(0, 'end')
+            return True
+        with patch.object(messagebox, 'askyesno', side_effect=alter):
+            self.buttons['Complete task'].invoke()
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM tasks WHERE completed=1').fetchone()[0], 0)
+
     def test_real_confirm_dialog_rejection_has_zero_writes(self):
         self.open()
         self.select_matter()
