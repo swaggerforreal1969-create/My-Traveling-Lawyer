@@ -66,5 +66,29 @@ def compare_task_to_checkpoint(core, token, matter_id, task_id,
     # provider readback. The digest is a frozen local observation, NOT a lease.
     # It may become stale immediately; caller receives no clearance authority.
     verified=boundary.verify(reservation=reservation,event_digest=event_digest)
+    # Untrusted readback may yield control to competing local writers or ACL
+    # changes. Revalidate the exact actor, permission and committed task/audit
+    # snapshot after readback, without extending the session idle lifetime.
+    # An observation is not safe to display as CURRENT if local state drifted.
+    with core.lock, core.passive_authorization():
+        current_actor=core._identity(token)
+        core._role(current_actor,matter_id,('owner','editor'))
+        if current_actor['id'] != actor['id']:
+            raise Denied('Task actor changed during checkpoint readback')
+        second=reconcile_task(core,token,matter_id,task_id,expected_version)
+        if second.status!='observed_completed':
+            raise Denied('Task state changed during checkpoint readback')
+        post_events=core.db.execute(
+            "SELECT seq,row_hash,actor_id FROM audit_chain "
+            "WHERE action='task.complete' AND target=?",(task_id,)).fetchall()
+        if (len(post_events)!=1 or
+                post_events[0]['seq']!=events[0]['seq'] or
+                post_events[0]['row_hash']!=events[0]['row_hash'] or
+                post_events[0]['actor_id']!=actor['id']):
+            raise Denied('Task audit changed during checkpoint readback')
+        post_head=core.audit_head()
+        if (post_head['seq'] != local_head['seq'] or
+                post_head['row_hash'] != local_head['row_hash']):
+            raise Denied('Local audit head changed during checkpoint readback')
     return TaskAnchorObservation(
         'local_and_signed_checkpoint_consistent',verified.sequence)
