@@ -70,6 +70,59 @@ class PrivateOperatorTests(unittest.TestCase):
         self.assertEqual(self.screen().open_task_count, 0)
         self.assertTrue(self.core.verify_audit())
 
+    def test_full_review_completion_refreshes_private_portfolio(self):
+        # Real fictional SecureCore -> review inbox -> human review -> task
+        # completion -> private portfolio. No fixture-only readiness provider.
+        prior=self.operator.portfolio(self.reviewer,now=self.now)
+        self.assertEqual((prior.total_open_tasks,prior.total_second_reviews),(1,1))
+        inbox=self.operator.reviewer_inbox(self.reviewer,self.mid)
+        self.assertEqual(len(inbox['items']),1)
+        self.operator.decide_review(self.reviewer,self.mid,self.eid,self.oid,
+            'corroborated_manually','Fictional independent manual review',
+            now=self.now)
+        reviewed=self.operator.portfolio(self.reviewer,now=self.now)
+        self.assertEqual((reviewed.total_open_tasks,
+                          reviewed.total_second_reviews),(1,0))
+        completed=self.operator.complete_task(self.reviewer,self.mid,
+            self.task['id'],1,now=self.now)
+        self.assertEqual(completed.status,'completed_and_refreshed')
+        screen=self.screen()
+        self.assertEqual((screen.open_task_count,
+                          screen.pending_second_review_count),(0,0))
+        final=self.operator.portfolio(self.reviewer,now=self.now)
+        self.assertEqual((final.total_open_tasks,
+                          final.total_second_reviews),(0,0))
+        summary=self.operator.portfolio_summary(self.reviewer,now=self.now)
+        self.assertIn('Open user-entered tasks: 0',summary)
+        for secret in ('SECRET CLIENT MATTER','SECRET SOURCE TITLE',
+                       'SECRET SOURCE EXCERPT','SECRET WORK TASK',
+                       self.mid,self.eid,self.reviewer):
+            self.assertNotIn(secret,summary)
+        self.assertEqual(self.operator.portfolio(self.outside,now=self.now)
+                         .total_open_tasks,0)
+        self.assertTrue(self.core.verify_audit())
+
+    def test_committed_completion_lost_refresh_reconciles_without_replay(self):
+        self.assertEqual(self.operator.portfolio(self.reviewer,now=self.now)
+                         .total_open_tasks,1)
+        with patch.object(self.operator.workflow,'open',
+                          side_effect=RuntimeError('fictional lost refresh')):
+            result=self.operator.complete_task(self.reviewer,self.mid,
+                self.task['id'],1,now=self.now)
+        self.assertEqual(result.status,'committed_refresh_unresolved')
+        self.assertEqual(self.operator.portfolio(self.reviewer,now=self.now)
+                         .total_open_tasks,0)
+        state=self.operator.reconcile_task(self.reviewer,self.mid,
+                                           self.task['id'],1)
+        self.assertEqual(state.status,'observed_completed')
+        self.assertEqual(self.operator.complete_task(self.reviewer,self.mid,
+            self.task['id'],1,now=self.now).status,
+            'observed_completed_no_write')
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+        self.assertTrue(self.core.verify_audit())
+
     def test_viewer_can_open_minimal_readiness_but_never_review_or_complete(self):
         view = self.screen(self.viewer)
         self.assertFalse(view.can_complete_tasks)
