@@ -128,6 +128,23 @@ class TaskExternalAnchorConsistency(unittest.TestCase):
         self.assertEqual(observed,['local_read_completed'])
         self.assertTrue(self.fence.is_pending())
 
+    def test_fictional_readback_latency_p50_p95_report(self):
+        import statistics
+        import time
+        samples=[]
+        for _ in range(30):
+            started=time.perf_counter_ns()
+            observed=self.observe()
+            self.assertFalse(observed.permits_fence_clearance)
+            samples.append((time.perf_counter_ns()-started)/1_000_000)
+        ordered=sorted(samples)
+        p50=statistics.median(ordered)
+        p95=ordered[max(0,int(len(ordered)*0.95+0.999999)-1)]
+        self.assertGreaterEqual(p95,0)
+        self.assertGreaterEqual(p95,p50)
+        print('FICTIONAL TASK ANCHOR LATENCY ms: n=30 p50=%.3f p95=%.3f max=%.3f'%
+              (p50,p95,max(samples)),flush=True)
+
     def test_coordinated_database_and_sidecar_rollback_is_detected(self):
         self.core.close()
         shutil.copy2(self.snapshot_db,self.path)
