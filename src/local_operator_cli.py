@@ -76,11 +76,16 @@ class LocalOperatorConsole:
                 self.write('Open tasks: ' + str(screen.open_task_count))
                 self.write('Available second-human reviews: ' +
                            str(screen.pending_second_review_count))
-                self.write('1 = Review current observation; 2 = Complete task; 3 = Refresh; 0 = Exit')
+                self.write('1 = Review; 2 = Complete task; 3 = Refresh; 4 = Private workload; 0 = Exit')
                 choice = self.read('Action: ').strip()
                 if choice == '0':
                     return False
                 if choice == '3':
+                    continue
+                if choice == '4':
+                    # Fresh read-only authorization for every summary request.
+                    # A previously selected matter never grants write access.
+                    self.write(self.operator.portfolio_summary(token))
                     continue
                 if choice == '1':
                     self._review(token, matter_id)
