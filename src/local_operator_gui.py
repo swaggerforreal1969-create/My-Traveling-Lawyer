@@ -420,6 +420,16 @@ def launch_gui(core, token, *, run_mainloop=True):
         revocation, an external custody assertion, or a new write grant.
         """
         try:
+            # Passive observations must NEVER refresh session idle lifetime.
+            with core.passive_authorization():
+                return privacy_check_passive()
+        except Exception:
+            clear_all_visible_work()
+            status.set('Private work hidden. Reauthenticate before continuing.')
+            update_controls()
+
+    def privacy_check_passive():
+        try:
             current = controller.operator.portfolio_summary(controller._token)
             # Authorization for the overall portfolio is not a lease on an
             # existing selected matter. Reconcile fresh action identities on

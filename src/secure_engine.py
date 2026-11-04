@@ -6,6 +6,8 @@ It is not production authentication, encrypted storage, or independent custody.
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from hashlib import sha256
+from contextlib import contextmanager
+from contextvars import ContextVar
 from hmac import compare_digest
 from secrets import token_urlsafe
 import json
@@ -19,6 +21,20 @@ class Invalid(Exception): pass
 
 class SecureCore:
     IDLE_SECONDS = 300
+    _passive_auth = ContextVar('mtl_passive_auth', default=False)
+
+    @contextmanager
+    def passive_authorization(self):
+        """Verify session/ACL without recording user activity.
+
+        Context-local and exception-safe; never use around write operations.
+        Calls still check credential expiry, revocation and idle age.
+        """
+        flag = self._passive_auth.set(True)
+        try:
+            yield
+        finally:
+            self._passive_auth.reset(flag)
     def __init__(self, path=':memory:'):
         self.lock = threading.RLock()
         self.db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
@@ -101,7 +117,8 @@ class SecureCore:
                 raise Denied('Access denied')
         except (TypeError,ValueError):
             raise Denied('Access denied')
-        self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(now.isoformat(),digest))
+        if not self._passive_auth.get():
+            self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(now.isoformat(),digest))
         return row
 
     def _role(self, identity, matter_id, allowed):
