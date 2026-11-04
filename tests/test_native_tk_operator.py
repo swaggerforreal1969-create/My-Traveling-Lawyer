@@ -126,6 +126,37 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(self.listboxes[1].size(),0)
         self.assertEqual(self.listboxes[2].size(),0)
 
+    def test_passive_watch_does_not_extend_idle_session(self):
+        self.open()
+        from hashlib import sha256
+        from datetime import datetime, timezone, timedelta
+        digest = sha256(self.reviewer.encode()).hexdigest()
+        frozen = (datetime.now(timezone.utc) -
+                  timedelta(seconds=self.core.IDLE_SECONDS - 30)).isoformat()
+        self.core.db.execute(
+            'UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+            (frozen, digest))
+        self.buttons['Workload (read only)'].invoke()
+        # A deliberate workload button is user activity.
+        self.core.db.execute(
+            'UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+            (frozen, digest))
+        self.root.privacy_check()
+        stored = self.core.db.execute(
+            'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+            (digest,)).fetchone()['last_seen_at']
+        self.assertEqual(stored, frozen)
+        expired = (datetime.now(timezone.utc) -
+                   timedelta(seconds=self.core.IDLE_SECONDS + 1)).isoformat()
+        self.core.db.execute(
+            'UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+            (expired, digest))
+        self.root.privacy_check()
+        self.assertEqual(self.texts[1].get('1.0', 'end-1c'), '')
+        self.assertEqual(self.core.db.execute(
+            'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+            (digest,)).fetchone()['last_seen_at'], expired)
+
     def test_idle_revocation_hides_open_portfolio_and_disables_actions(self):
         self.open()
         self.buttons['Workload (read only)'].invoke()
