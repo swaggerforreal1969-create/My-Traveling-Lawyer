@@ -22,7 +22,8 @@ class AuthenticatedCustodyTransport:
         self._request = request
 
     def exchange(self, operation, body):
-        if operation not in ('admit', 'read_head', 'read_event', 'read_head_at'):
+        if operation not in ('admit', 'read_head', 'read_event', 'read_head_at',
+                             'v2_admit', 'v2_read_latest', 'v2_read_head_at'):
             raise Denied('Unsupported custody operation')
         if type(body) is not dict:
             raise Denied('Invalid custody request')
