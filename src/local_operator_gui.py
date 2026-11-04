@@ -182,7 +182,17 @@ class LocalOperatorController:
             raise Invalid('Invalid task selection')
         task_id, version = self._tasks[position]
         if self._durable_fence is not None:
-            self._reservation = self._durable_fence.begin()  # before write
+            core=self.operator.core
+            with core.lock:
+                actor=core._identity(self._token)
+                core._role(actor,self._matter_id,('owner','editor'))
+                tip=core.db.execute(
+                    'SELECT COALESCE(MAX(seq),0) FROM audit_chain').fetchone()[0]
+            # Anonymous local fingerprint survives restart. The real write
+            # independently reauthorizes under its own SQLite transaction.
+            self._reservation = self._durable_fence.begin(
+                task_identity=(actor['id'],self._matter_id,task_id,version),
+                audit_before=tip)
         self._recovery = None
         # Any exception, ambiguous outcome, or crash leaves the fence pending.
         result = self.operator.complete_task(
@@ -213,6 +223,61 @@ class LocalOperatorController:
             return ActionFeedback('unresolved_no_write',
                                   'Read-only state refresh unresolved; no new write.')
         return ActionFeedback(result.status, allowed[result.status])
+
+    def reconcile_pending_task_after_restart(self):
+        """Actor-authorized, strictly observational local task readback.
+
+        Do NOT clear the sidecar fence or repeat a write, even when the local
+        task/audit show an exact commit. External custody is not established.
+        """
+        if (self._durable_fence is None or not self._durable_fence.is_pending()
+                or self._matter_id is None):
+            raise Invalid('No selected task recovery context')
+        self._tasks,self._reviews=(),()
+        core=self.operator.core
+        with core.lock, core.passive_authorization():
+            actor=core._identity(self._token)
+            core._role(actor,self._matter_id,('owner','editor'))
+            if not core.verify_audit():
+                raise Denied('Local task audit failed verification')
+            rows=core.db.execute(
+                'SELECT id,version,completed FROM tasks WHERE matter_id=? '
+                'ORDER BY id LIMIT 102',(self._matter_id,)).fetchall()
+            if len(rows)>100:
+                raise Denied('Task recovery bound exceeded')
+            matches=[]
+            for row in rows:
+                version=row['version']
+                completed=row['completed']
+                if (type(version) is not int or version<1 or
+                        type(completed) is not int or completed not in (0,1)):
+                    raise Denied('Invalid task recovery state')
+                expected=version-1 if completed else version
+                if expected<1:
+                    continue
+                identity=(actor['id'],self._matter_id,row['id'],expected)
+                events=core.db.execute(
+                    "SELECT seq,actor_id FROM audit_chain WHERE action='task.complete' "
+                    "AND target=?",(row['id'],)).fetchall()
+                if completed and (len(events)!=1 or events[0]['actor_id']!=actor['id']):
+                    continue
+                if not completed and events:
+                    continue
+                event_seq=events[0]['seq'] if completed else None
+                if self._durable_fence.pending_task_matches(identity,event_seq):
+                    matches.append('observed_local_commit' if completed
+                                   else 'observed_local_no_commit')
+            if len(matches)!=1:
+                return ActionFeedback('reconciliation_unresolved',
+                    'Task reservation cannot be uniquely reconciled. '
+                    'Write fence remains pending. Do NOT repeat.')
+            if matches[0]=='observed_local_commit':
+                return ActionFeedback('observed_local_commit',
+                    'Local task completion and matching audit observed. '
+                    'Fence remains pending for independent incident review.')
+            return ActionFeedback('observed_local_no_commit',
+                'Task still open at reserved version. Local no-commit observed; '
+                'fence remains pending. Do NOT retry automatically.')
 
     def reconcile_pending_review_after_restart(self):
         """Human-triggered ONLY, actor-authorized read-only local reconciliation.
@@ -658,7 +723,12 @@ def launch_gui(core, token, *, run_mainloop=True):
 
     def recover():
         try:
-            result=controller.reconcile_last_review()
+            if (controller._durable_fence is not None and
+                    controller._durable_fence.is_pending() and
+                    controller._durable_fence.pending_kind()=='task'):
+                result=controller.reconcile_pending_task_after_restart()
+            else:
+                result=controller.reconcile_last_review()
             display_counts()
             status.set(result.message)
             update_controls()
@@ -678,7 +748,7 @@ def launch_gui(core, token, *, run_mainloop=True):
     refresh_button = ttk.Button(buttons,text='Refresh',command=display_counts)
     review_button = ttk.Button(buttons,text='Record review',command=submit_review)
     task_button = ttk.Button(buttons,text='Complete task',command=submit_task)
-    recovery_button = ttk.Button(buttons,text='Recover review',command=recover)
+    recovery_button = ttk.Button(buttons,text='Recover write',command=recover)
     # Two rows preserve button reachability at the minimum 580px window.
     # Each button stays in tab order; no horizontal scrolling is needed.
     for i, button in enumerate((select_button, refresh_button, review_button,
