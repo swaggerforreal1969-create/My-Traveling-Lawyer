@@ -151,6 +151,10 @@ jobs:
         run: |
           python -m py_compile src/offline_fixture_pin_reader.py src/read_only_pin_quorum.py tests/test_pin_restart.py
           python -m unittest discover -s tests -p 'test_pin_restart.py' -q
+      - name: Authenticated dual-signer predecessor pin acceptance
+        run: |
+          python -m py_compile src/authenticated_pin_source.py src/read_only_pin_quorum.py tests/test_authenticated_pin_source.py
+          python -m unittest discover -s tests -p 'test_authenticated_pin_source.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
