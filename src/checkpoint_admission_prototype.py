@@ -162,6 +162,29 @@ class LocalCheckpointAdmissionPrototype:
         except (sqlite3.Error,OSError) as exc:
             raise Denied('Checkpoint readback unavailable') from exc
 
+    def read_head_at(self, seq):
+        """Historical signed head for offline read-only chain reconciliation.
+
+        No query by nonce: nonce is NOT cryptographically included in v1
+        signed heads, so this cannot independently attest nonce identity.
+        """
+        if type(seq) is not int or seq <= 0:
+            raise Denied('Invalid historical checkpoint sequence')
+        try:
+            with self._db() as db:
+                row=db.execute(
+                    """SELECT sequence,reservation_digest,event_digest,previous,
+                              signer_id,signature FROM checkpoint_events
+                       WHERE sequence=?""",(seq,)).fetchone()
+                if row is None:
+                    raise Denied('Historical signed checkpoint absent')
+                return dict(zip(('sequence','reservation_digest',
+                                 'event_digest','previous','signer_id','signature'),row))
+        except Denied:
+            raise
+        except (sqlite3.Error,OSError) as exc:
+            raise Denied('Historical checkpoint readback unavailable') from exc
+
     def read_head(self):
         try:
             with self._db() as db:
