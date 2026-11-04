@@ -179,6 +179,10 @@ jobs:
         run: |
           python -m py_compile tests/test_v2_crash_process.py
           python -m unittest discover -s tests -p 'test_v2_crash_process.py' -q
+      - name: Version-two provider neutral signed nonce recovery acceptance
+        run: |
+          python -m py_compile src/v2_custody_transport.py src/provider_neutral_custody_client.py tests/test_v2_custody_transport.py
+          python -m unittest discover -s tests -p 'test_v2_custody_transport.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
