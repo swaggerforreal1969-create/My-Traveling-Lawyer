@@ -417,6 +417,19 @@ def launch_gui(core, token, *, run_mainloop=True):
         """
         try:
             current = controller.operator.portfolio_summary(controller._token)
+            # Authorization for the overall portfolio is not a lease on an
+            # existing selected matter. Reconcile fresh action identities on
+            # every tick; invalidate rather than silently repoint a selection
+            # after ACL changes or concurrent task/review mutations.
+            if controller._matter_id is not None:
+                old_tasks = controller._tasks
+                old_reviews = controller._reviews
+                controller._load_authorized_work()
+                if (controller._tasks != old_tasks or
+                        controller._reviews != old_reviews):
+                    clear_all_visible_work()
+                    status.set('Matter changed. Select it again after reauthorization.')
+                    return
             # An already displayed portfolio must not retain old counts after
             # an authorized matter-index/task-count change.
             existing = portfolio_text.get('1.0', 'end-1c')
@@ -453,6 +466,8 @@ def launch_gui(core, token, *, run_mainloop=True):
     root.after(2000, privacy_tick)
 
     def refresh_lists():
+        # Rebuilding the matter index invalidates the review-note context.
+        note.delete('1.0', 'end')
         clear_portfolio()
         try:
             number = controller.list_matters()
@@ -469,6 +484,8 @@ def launch_gui(core, token, *, run_mainloop=True):
         update_controls()
 
     def select_matter():
+        # A draft belongs to its previous matter; never carry it across.
+        note.delete('1.0', 'end')
         clear_portfolio()
         if not matter_list.curselection():
             return
