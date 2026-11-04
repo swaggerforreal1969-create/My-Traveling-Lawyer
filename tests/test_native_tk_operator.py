@@ -190,6 +190,40 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(self.core.db.execute(
             'SELECT count(*) FROM source_second_review').fetchone()[0], 0)
 
+    def test_revoked_selected_matter_clears_draft_and_actions(self):
+        self.open()
+        self.select_matter()
+        self.texts[0].insert('1.0', 'SECRET PRIVATE REVIEW DRAFT')
+        self.core.revoke_token(self.reviewer)
+        self.root.privacy_check()
+        self.assertEqual(self.texts[0].get('1.0', 'end-1c'), '')
+        self.assertTrue(all(box.size() == 0 for box in self.listboxes))
+        self.assertEqual(str(self.buttons['Record review'].cget('state')), 'disabled')
+
+    def test_concurrent_task_change_invalidates_selected_action(self):
+        self.open()
+        self.select_matter()
+        self.assertEqual(self.listboxes[2].size(), 1)
+        self.texts[0].insert('1.0', 'FICTIONAL UNSENT DRAFT')
+        self.core.create_task(self.author, self.mid, 'Second fictional task',
+                              '2026-10-01T00:00:00Z')
+        self.root.privacy_check()
+        self.assertEqual(self.listboxes[2].size(), 0)
+        self.assertEqual(self.texts[0].get('1.0', 'end-1c'), '')
+        self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
+
+    def test_reselect_matter_never_carries_private_review_note(self):
+        self.open()
+        self.select_matter()
+        self.texts[0].insert('1.0', 'FICTIONAL WRONG MATTER DRAFT')
+        self.buttons['Workload (read only)'].invoke()
+        self.buttons['Refresh'].invoke() if str(self.buttons['Refresh'].cget('state')) != 'disabled' else None
+        # Rebuild authorized list and select again without replaying a write.
+        self.root.privacy_check()
+        self.assertEqual(self.texts[0].get('1.0', 'end-1c'), '')
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 0)
+
     def test_alt_p_keyboard_shortcut_opens_portfolio(self):
         self.open()
         self.root.focus_force()
