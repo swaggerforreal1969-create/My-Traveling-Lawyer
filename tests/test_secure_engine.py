@@ -37,6 +37,55 @@ class AuthorizationTests(unittest.TestCase):
         self.core.grant(self.owner_token,self.m['id'],self.editor,'editor',1)
         with self.assertRaises(Stale):self.core.grant(self.owner_token,self.m['id'],self.viewer,'viewer',1)
         self.assertDenied(self.core.read_notes,self.viewer_token,self.m['id'])
+    def test_passive_authorization_does_not_refresh_idle(self):
+        from datetime import datetime, timezone, timedelta
+        from hashlib import sha256
+        digest=sha256(self.owner_token.encode()).hexdigest()
+        old=(datetime.now(timezone.utc)-timedelta(seconds=240)).isoformat()
+        self.core.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(old,digest))
+        with self.core.passive_authorization():
+            self.assertEqual(1,len(self.core.list_matters(self.owner_token)))
+            self.assertEqual([],self.core.read_notes(self.owner_token,self.m['id']))
+        self.assertEqual(self.core.db.execute(
+            'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+            (digest,)).fetchone()['last_seen_at'],old)
+        self.core.list_matters(self.owner_token)
+        self.assertNotEqual(self.core.db.execute(
+            'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+            (digest,)).fetchone()['last_seen_at'],old)
+
+    def test_passive_auth_denies_expired_and_revoked(self):
+        from datetime import datetime, timezone, timedelta
+        from hashlib import sha256
+        digest=sha256(self.owner_token.encode()).hexdigest()
+        expired=(datetime.now(timezone.utc)-timedelta(
+            seconds=self.core.IDLE_SECONDS+1)).isoformat()
+        self.core.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(expired,digest))
+        with self.core.passive_authorization():
+            self.assertDenied(self.core.list_matters,self.owner_token)
+        self.assertEqual(self.core.db.execute(
+            'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+            (digest,)).fetchone()['last_seen_at'],expired)
+        self.core.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+                             (datetime.now(timezone.utc).isoformat(),digest))
+        self.core.revoke_token(self.owner_token)
+        with self.core.passive_authorization():
+            self.assertDenied(self.core.list_matters,self.owner_token)
+
+    def test_passive_context_restored_after_exception(self):
+        from datetime import datetime, timezone, timedelta
+        from hashlib import sha256
+        digest=sha256(self.owner_token.encode()).hexdigest()
+        old=(datetime.now(timezone.utc)-timedelta(seconds=120)).isoformat()
+        self.core.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(old,digest))
+        with self.assertRaises(RuntimeError):
+            with self.core.passive_authorization():
+                raise RuntimeError('synthetic passive failure')
+        self.core.list_matters(self.owner_token)
+        self.assertNotEqual(self.core.db.execute(
+            'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+            (digest,)).fetchone()['last_seen_at'],old)
+
     def test_revocation(self):
         self.core.revoke_token(self.owner_token)
         self.assertDenied(self.core.list_matters,self.owner_token)
