@@ -62,9 +62,9 @@ def compare_task_to_checkpoint(core, token, matter_id, task_id,
             'audit_head_hash':local_head['row_hash'],
         }
         event_digest=_digest(intent)
-        # The checkpoint verifier performs real transport-independent signed,
-        # predecessor-pinned event readback. No untrusted acknowledgment alone
-        # is accepted. Signed fixture testing is NOT an external acceptance.
-        verified=boundary.verify(reservation=reservation,event_digest=event_digest)
-        return TaskAnchorObservation(
-            'local_and_signed_checkpoint_consistent',verified.sequence)
+    # Never hold SecureCore's lock across a potentially slow or untrusted
+    # provider readback. The digest is a frozen local observation, NOT a lease.
+    # It may become stale immediately; caller receives no clearance authority.
+    verified=boundary.verify(reservation=reservation,event_digest=event_digest)
+    return TaskAnchorObservation(
+        'local_and_signed_checkpoint_consistent',verified.sequence)
