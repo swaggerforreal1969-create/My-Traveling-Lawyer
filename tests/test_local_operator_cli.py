@@ -90,6 +90,41 @@ class LocalOperatorInteractionTests(unittest.TestCase):
             "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
         ).fetchone()[0],1)
 
+    def test_private_workload_accessible_from_selected_matter_without_write(self):
+        output=self.go(self.reviewer,['1','4','0'])
+        self.assertIn('PRIVATE ATTORNEY MATTER PORTFOLIO',output)
+        self.assertIn('Open user-entered tasks: 1',output)
+        self.assertIn('Second-human reviews waiting: 1',output)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],0)
+        self.assertEqual(self.count('source_second_review'),0)
+
+    def test_private_workload_refresh_after_completion_in_same_session(self):
+        output=self.go(self.reviewer,['1','4','2','1','YES','4','0'])
+        self.assertIn('Open user-entered tasks: 1',output)
+        self.assertIn('Open user-entered tasks: 0',output)
+        self.assertIn('Task completed. Private readiness refreshed.',output)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+
+    def test_in_matter_private_summary_reauthorizes_after_revocation(self):
+        outputs=[]
+        answers=iter(['1','4'])
+        def read(prompt):
+            value=next(answers)
+            if value=='4':
+                self.core.revoke_token(self.reviewer)
+            return value
+        LocalOperatorConsole(self.core,read=read,write=outputs.append).run(self.reviewer)
+        transcript='\\n'.join(outputs)
+        self.assertIn('Authorization or current state rejected',transcript)
+        self.assertNotIn('PRIVATE ATTORNEY MATTER PORTFOLIO',transcript)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],0)
+
     def test_cancel_review_and_task_without_any_writes(self):
         result = self.go(self.reviewer, ['1','1','1','1',
             'Second human reviewed fake citation','NO','2','1','NO','0'])
