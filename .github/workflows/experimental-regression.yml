@@ -171,6 +171,10 @@ jobs:
         run: |
           python -m py_compile src/historical_custody_readback.py src/checkpoint_admission_prototype.py src/provider_neutral_custody_client.py tests/test_historical_custody_readback.py
           python -m unittest discover -s tests -p 'test_historical_custody_readback.py' -q
+      - name: Version-two nonce-bound signed historical recovery acceptance
+        run: |
+          python -m py_compile src/nonce_bound_custody.py tests/test_nonce_bound_custody.py
+          python -m unittest discover -s tests -p 'test_nonce_bound_custody.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
