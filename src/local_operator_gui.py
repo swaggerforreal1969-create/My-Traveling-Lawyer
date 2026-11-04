@@ -391,7 +391,11 @@ def launch_gui(core, token, *, run_mainloop=True):
         task_list.delete(0, 'end')
         controller._tasks, controller._reviews = (), ()
         controller._matters = ()
-        # Keep uncertain review identity intact; it must not be auto-cleared.
+        # Forget the selected matter on ordinary privacy invalidation; a
+        # revoked view must never regain actionable IDs through Refresh alone.
+        # Pending review recovery retains its exact matter and reservation.
+        if not controller.has_recovery():
+            controller._matter_id = None
         update_controls()
 
     def show_portfolio():
