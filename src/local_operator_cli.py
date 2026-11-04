@@ -85,7 +85,8 @@ class LocalOperatorConsole:
                 if choice == '1':
                     self._review(token, matter_id)
                 elif choice == '2':
-                    self._complete(token, matter_id)
+                    if self._complete(token, matter_id) is False:
+                        return False
                 else:
                     self.write('Unknown action; no write performed.')
             except RefreshUnresolved as result:
@@ -144,17 +145,26 @@ class LocalOperatorConsole:
             self.write('Cancelled; no write performed.')
             return
         task = tasks[pos]
-        outcome = self.operator.complete_task(
+        outcome = self.operator.complete_task_and_refresh_portfolio(
             token, matter_id, task['task_id'], task['version'])
         messages = {
             'completed_and_refreshed': 'Task completed. Private readiness refreshed.',
             'observed_completed_no_write': 'Already completed; no write performed.',
             'unresolved_no_write': 'Task state changed; no write performed.',
-            'committed_refresh_unresolved': 'COMMITTED, READINESS UNRESOLVED. DO NOT REPEAT THE WRITE.'
+            'committed_refresh_unresolved': 'COMMITTED, READINESS UNRESOLVED. DO NOT REPEAT THE WRITE.',
+            'portfolio_refresh_unresolved': 'COMMITTED OR OBSERVED, PORTFOLIO UNRESOLVED. DO NOT REPEAT THE WRITE.'
         }
         if outcome.status not in messages:
             raise Invalid('Unexpected completion outcome')
         self.write(messages[outcome.status])
+        if outcome.status in ('committed_refresh_unresolved',
+                              'portfolio_refresh_unresolved'):
+            self.write('Stop this session. Reopen read-only and reconcile before any new write.')
+            return False
+        if outcome.copy_safe_summary is None or outcome.portfolio is None:
+            raise Invalid('Missing verified private portfolio receipt')
+        self.write(outcome.copy_safe_summary)
+        return True
 
 
 def main():
