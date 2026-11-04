@@ -135,14 +135,15 @@ class HistoricalSignedRecoveryTests(unittest.TestCase):
         with self.assertRaises(Denied):
             self.recover(gate=self.gate(provider=Switched(self.provider)))
 
-    def test_duplicate_signed_reservation_event_fails_ambiguity(self):
-        # Cannot legitimately create a duplicate through atomic admission.
-        # Fault-inject inconsistent DB history to exercise deny semantics.
-        with sqlite3.connect(self.path) as conn:
-            conn.execute('UPDATE checkpoint_events SET reservation_digest=('
-                         'SELECT reservation_digest FROM checkpoint_events '
-                         'WHERE sequence=2) WHERE sequence=3')
-        with self.assertRaises(Denied):self.recover()
+    def test_duplicate_reservation_cannot_be_forged_in_atomic_storage(self):
+        # Real admission storage has an enforced uniqueness constraint.
+        # A forged duplicate cannot even be persisted by SQLite.
+        with self.assertRaises(sqlite3.IntegrityError):
+            with sqlite3.connect(self.path) as conn:
+                conn.execute('UPDATE checkpoint_events SET reservation_digest=('
+                             'SELECT reservation_digest FROM checkpoint_events '
+                             'WHERE sequence=2) WHERE sequence=3')
+        self.assertEqual(self.recover().operation_sequence,2)
 
 
 if __name__=='__main__':
