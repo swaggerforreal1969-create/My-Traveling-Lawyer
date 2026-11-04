@@ -175,6 +175,10 @@ jobs:
         run: |
           python -m py_compile src/nonce_bound_custody.py tests/test_nonce_bound_custody.py
           python -m unittest discover -s tests -p 'test_nonce_bound_custody.py' -q
+      - name: Version-two signed nonce subprocess crash and recovery acceptance
+        run: |
+          python -m py_compile tests/test_v2_crash_process.py
+          python -m unittest discover -s tests -p 'test_v2_crash_process.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
