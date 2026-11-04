@@ -25,6 +25,15 @@ class OperatorScreen:
     external_ai_transmission: bool = False
 
 
+@dataclass(frozen=True)
+class PortfolioCompletionAction:
+    status: str
+    portfolio: object = None
+    legal_deadlines_verified: bool = False
+    court_filing_approved: bool = False
+    independent_custody_verified: bool = False
+
+
 class PrivateAttorneyOperator:
     """Session-less operations: each invocation requires fresh bearer authorization."""
 
@@ -88,6 +97,31 @@ class PrivateAttorneyOperator:
     def complete_task(self, token, matter_id, task_id, expected_version, *, now=None):
         return self.workflow.complete_if_ready(
             token, matter_id, task_id, expected_version, now=now)
+
+    def complete_task_and_refresh_portfolio(self, token, matter_id, task_id,
+                                            expected_version, *, now=None):
+        """One human-authorized completion plus a fresh read-only portfolio.
+
+        Neither a successful completion nor a failed refresh is replayed.
+        Never return a portfolio which predates the completion action.
+        This is a local operator convenience, not externally held finality.
+        """
+        action = self.complete_task(token, matter_id, task_id,
+                                    expected_version, now=now)
+        if action.status == 'committed_refresh_unresolved':
+            return PortfolioCompletionAction('committed_refresh_unresolved')
+        if action.status == 'unresolved_no_write':
+            return PortfolioCompletionAction('unresolved_no_write')
+        if action.status not in ('completed_and_refreshed',
+                                 'observed_completed_no_write'):
+            raise Invalid('Unknown completion outcome')
+        try:
+            current = self.portfolio(token, now=now)
+        except Exception:
+            # A write may already be committed. Fail closed; the operator must
+            # reopen the portfolio read-only. Never silently complete again.
+            return PortfolioCompletionAction('portfolio_refresh_unresolved')
+        return PortfolioCompletionAction(action.status, current)
 
     def reconcile_research(self, token, matter_id, operation, record_id):
         return self.workflow.reconcile_research(token, matter_id, operation, record_id)
