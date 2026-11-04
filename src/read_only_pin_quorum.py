@@ -38,6 +38,15 @@ class ReadOnlyPinQuorum:
                 or not callable(getattr(primary,'read_pin',None))
                 or not callable(getattr(secondary,'read_pin',None))):
             raise Denied('Two distinct read-only predecessor sources required')
+        # Sources that claim cryptographic authentication must be anchored to
+        # DIFFERENT independently supplied signer identities, not merely two
+        # reader objects using the same signer/key. Legacy unsigned fixture
+        # readers remain supported only as experimental read-only inputs.
+        one=getattr(primary,'signer_id',None)
+        two=getattr(secondary,'signer_id',None)
+        if (one is not None or two is not None) and (
+                not _identity(one) or not _identity(two) or one==two):
+            raise Denied('Distinct authenticated predecessor signers required')
         self.primary=primary
         self.secondary=secondary
 
