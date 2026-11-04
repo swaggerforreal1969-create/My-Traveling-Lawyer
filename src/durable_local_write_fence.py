@@ -230,6 +230,20 @@ class LocalWriteFence:
         except (sqlite3.Error,OSError) as error:
             raise Denied('Task reservation unreadable') from error
 
+    def pending_kind(self):
+        """Inspect reservation kind only; never a clearance or write grant."""
+        self._verify_binding()
+        try:
+            with self._connection() as db:
+                rows=db.execute('SELECT kind FROM fence WHERE slot=1').fetchall()
+                if len(rows)!=1 or rows[0][0] not in ('review','task','unknown'):
+                    raise Denied('Pending reservation unavailable')
+                return rows[0][0]
+        except Denied:
+            raise
+        except (sqlite3.Error,OSError) as error:
+            raise Denied('Pending reservation unreadable') from error
+
     def pending_reservation(self):
         """Return only an opaque local CAS version, not authorization evidence.
 
