@@ -153,6 +153,88 @@ class AuthorizationTests(unittest.TestCase):
             'SELECT last_seen_at FROM credentials WHERE token_digest=?',
             (digest,)).fetchone()['last_seen_at'])
 
+    def test_task_transaction_revoked_before_admission_has_zero_write(self):
+        task=self.core.create_task(self.owner_token,self.m['id'],'Fictional task',
+                                   '2026-10-01T00:00:00Z')
+        self.core.revoke_token(self.owner_token)
+        self.assertDenied(self.core.complete_task,self.owner_token,task['id'],1)
+        row=self.core.db.execute(
+            'SELECT completed,version FROM tasks WHERE id=?',(task['id'],)).fetchone()
+        self.assertEqual((row['completed'],row['version']),(0,1))
+
+    def test_task_transaction_role_downgrade_denied_before_write(self):
+        self.core.grant(self.owner_token,self.m['id'],self.editor,'editor',1)
+        task=self.core.create_task(self.owner_token,self.m['id'],'Fictional task',
+                                   '2026-10-01T00:00:00Z')
+        version=self.core.db.execute(
+            'SELECT version FROM matters WHERE id=?',(self.m['id'],)).fetchone()[0]
+        self.core.grant(self.owner_token,self.m['id'],self.editor,'viewer',version)
+        self.assertDenied(self.core.complete_task,self.editor_token,task['id'],1)
+        row=self.core.db.execute(
+            'SELECT completed,version FROM tasks WHERE id=?',(task['id'],)).fetchone()
+        self.assertEqual((row['completed'],row['version']),(0,1))
+
+    def test_task_transaction_rollback_on_audit_failure(self):
+        from unittest.mock import patch
+        task=self.core.create_task(self.owner_token,self.m['id'],'Fictional task',
+                                   '2026-10-01T00:00:00Z')
+        with patch.object(self.core,'_audit',side_effect=RuntimeError('synthetic audit failure')):
+            with self.assertRaises(RuntimeError):
+                self.core.complete_task(self.owner_token,task['id'],1)
+        row=self.core.db.execute(
+            'SELECT completed,version FROM tasks WHERE id=?',(task['id'],)).fetchone()
+        self.assertEqual((row['completed'],row['version']),(0,1))
+        self.assertTrue(self.core.verify_audit())
+
+    def test_task_transaction_separate_connection_writer_order(self):
+        import threading
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'shared_fictional.db'
+            a=SecureCore(path)
+            try:
+                firm=a.provision_firm('Fictional Shared Firm')
+                _,owner=a.provision_user(firm,'Test Owner')
+                matter=a.create_matter(owner,'Fictional Matter')
+                task=a.create_task(owner,matter['id'],'Fictional task',
+                                   '2026-10-01T00:00:00Z')
+                b=SecureCore(path)
+                try:
+                    entered=threading.Event()
+                    release=threading.Event()
+                    results=[]
+                    original=a._identity
+                    def paused_identity(token):
+                        entered.set()
+                        if not release.wait(5):raise RuntimeError('Test barrier timeout')
+                        return original(token)
+                    def completion():
+                        try:results.append(('complete',a.complete_task(owner,task['id'],1)))
+                        except Exception as exc:results.append(('complete_error',type(exc).__name__))
+                    def revocation():
+                        try:b.revoke_token(owner);results.append(('revoked',True))
+                        except Exception as exc:results.append(('revoke_error',type(exc).__name__))
+                    with patch.object(a,'_identity',side_effect=paused_identity):
+                        writer=threading.Thread(target=completion)
+                        writer.start()
+                        self.assertTrue(entered.wait(5))
+                        rival=threading.Thread(target=revocation)
+                        rival.start()
+                        release.set()
+                        writer.join(timeout=8)
+                        rival.join(timeout=8)
+                    self.assertFalse(writer.is_alive())
+                    self.assertFalse(rival.is_alive())
+                    self.assertEqual([x[0] for x in results].count('complete'),1)
+                    self.assertEqual([x[0] for x in results].count('revoked'),1)
+                    self.assertEqual(a.db.execute(
+                        'SELECT completed,version FROM tasks WHERE id=?',
+                        (task['id'],)).fetchone()['completed'],1)
+                    self.assertDenied(a.complete_task,owner,task['id'],1)
+                    self.assertTrue(a.verify_audit())
+                finally:b.close()
+            finally:a.close()
+
     def test_revocation(self):
         self.core.revoke_token(self.owner_token)
         self.assertDenied(self.core.list_matters,self.owner_token)
