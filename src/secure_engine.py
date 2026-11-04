@@ -21,7 +21,6 @@ class Invalid(Exception): pass
 
 class SecureCore:
     IDLE_SECONDS = 300
-    _passive_auth = ContextVar('mtl_passive_auth', default=False)
 
     @contextmanager
     def passive_authorization(self):
@@ -36,6 +35,10 @@ class SecureCore:
         finally:
             self._passive_auth.reset(flag)
     def __init__(self, path=':memory:'):
+        # The scope belongs to THIS core, never every SecureCore in the same
+        # context. A passive watch on one database must not suppress genuine
+        # user-activity tracking in another independent operator/session.
+        self._passive_auth = ContextVar('mtl_passive_auth_instance', default=False)
         self.lock = threading.RLock()
         self.db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
