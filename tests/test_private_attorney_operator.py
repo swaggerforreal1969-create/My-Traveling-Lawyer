@@ -143,6 +143,39 @@ class PrivateOperatorTests(unittest.TestCase):
             "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
         ).fetchone()[0],1)
 
+    def test_copy_safe_completion_receipt_uses_same_portfolio_snapshot(self):
+        result=self.operator.complete_task_and_refresh_portfolio(
+            self.reviewer,self.mid,self.task['id'],1,now=self.now)
+        self.assertEqual(result.status,'completed_and_refreshed')
+        self.assertIsInstance(result.copy_safe_summary,str)
+        self.assertIn('Open user-entered tasks: 0',result.copy_safe_summary)
+        self.assertIn('Second-human reviews waiting: 1',
+                      result.copy_safe_summary)
+        from src.private_matter_portfolio import render_portfolio_plain
+        self.assertEqual(result.copy_safe_summary,
+                         render_portfolio_plain(result.portfolio))
+        for secret in ('SECRET CLIENT MATTER','SECRET WORK TASK',
+                       'SECRET SOURCE TITLE','SECRET SOURCE EXCERPT',
+                       self.mid,self.eid,self.reviewer):
+            self.assertNotIn(secret,result.copy_safe_summary)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+
+    def test_copy_safe_render_failure_leaves_no_stale_receipt_or_retry(self):
+        with patch('src.private_matter_portfolio.render_portfolio_plain',
+                   side_effect=RuntimeError('fictional render failure')):
+            result=self.operator.complete_task_and_refresh_portfolio(
+                self.reviewer,self.mid,self.task['id'],1,now=self.now)
+        self.assertEqual(result.status,'portfolio_refresh_unresolved')
+        self.assertIsNone(result.portfolio)
+        self.assertIsNone(result.copy_safe_summary)
+        self.assertEqual(self.operator.portfolio(self.reviewer,now=self.now)
+                         .total_open_tasks,0)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+
     def test_postcommit_portfolio_failure_is_unresolved_without_replay(self):
         with patch.object(self.operator,'portfolio',
                           side_effect=RuntimeError('fictional read failure')):
