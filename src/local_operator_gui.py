@@ -556,76 +556,95 @@ def launch_gui(core, token, *, run_mainloop=True):
                 tuple(widget.curselection()) != (position,)):
             raise Stale('Selected action changed during confirmation')
 
+    # One in-flight human confirmation per window, including nested Tk events.
+    write_confirmation = {'active': False}
+
     def submit_review():
-        if not review_list.curselection():
-            status.set('Select a current human-review item before continuing.')
-            review_list.focus_set()
+        if write_confirmation['active']:
+            status.set('An authorization confirmation is already active. No new write.')
             return
-        human_note = note.get('1.0', 'end-1c')
-        # Reject incomplete notes before soliciting a legally consequential
-        # confirmation. The backend retains its independent validation.
-        if not 15 <= len(human_note.strip()) <= 1200:
-            status.set('Review note must contain 15–1200 characters. No write performed.')
-            note.focus_set()
-            return
-        position = review_list.curselection()[0]
-        original_matter = controller._matter_id
+        write_confirmation['active'] = True
         try:
-            identity = controller._reviews[position]
-        except (IndexError, TypeError):
-            clear_stale_actions()
-            return
-        decision = choice.get()
-        if not messagebox.askyesno('Confirm second-human review',
-                                   'Record this one review? No automatic retry.'):
-            status.set('Cancelled; no write performed.')
-            return
-        try:
-            confirmation_still_current('review', position, original_matter, identity)
-            if choice.get() != decision or note.get('1.0', 'end-1c') != human_note:
-                raise Stale('Human review input changed during confirmation')
-            result=controller.review(position, decision, human_note, True)
-            note.delete('1.0','end')
-            if result.status == 'review_committed':
-                display_counts()
-            else:
-                review_list.delete(0,'end')
-                task_list.delete(0,'end')
-            status.set(result.message)
-            update_controls()
-            notify_uncertain_result(result)
-        except (Denied, Invalid, Stale, EvidenceInvalid):
-            status.set('Review rejected: stale, unauthorized or invalid; no retry.')
-            clear_stale_actions()
-            review_list.focus_set()
+            if not review_list.curselection():
+                status.set('Select a current human-review item before continuing.')
+                review_list.focus_set()
+                return
+            human_note = note.get('1.0', 'end-1c')
+            # Reject incomplete notes before soliciting a legally consequential
+            # confirmation. The backend retains its independent validation.
+            if not 15 <= len(human_note.strip()) <= 1200:
+                status.set('Review note must contain 15–1200 characters. No write performed.')
+                note.focus_set()
+                return
+            position = review_list.curselection()[0]
+            original_matter = controller._matter_id
+            try:
+                identity = controller._reviews[position]
+            except (IndexError, TypeError):
+                clear_stale_actions()
+                return
+            decision = choice.get()
+            if not messagebox.askyesno('Confirm second-human review',
+                                       'Record this one review? No automatic retry.'):
+                status.set('Cancelled; no write performed.')
+                return
+            try:
+                confirmation_still_current('review', position, original_matter, identity)
+                if choice.get() != decision or note.get('1.0', 'end-1c') != human_note:
+                    raise Stale('Human review input changed during confirmation')
+                result=controller.review(position, decision, human_note, True)
+                note.delete('1.0','end')
+                if result.status == 'review_committed':
+                    display_counts()
+                else:
+                    review_list.delete(0,'end')
+                    task_list.delete(0,'end')
+                status.set(result.message)
+                update_controls()
+                notify_uncertain_result(result)
+            except (Denied, Invalid, Stale, EvidenceInvalid):
+                status.set('Review rejected: stale, unauthorized or invalid; no retry.')
+                clear_stale_actions()
+                review_list.focus_set()
+    
+        finally:
+            write_confirmation['active'] = False
 
     def submit_task():
-        if not task_list.curselection(): return
-        position = task_list.curselection()[0]
-        original_matter = controller._matter_id
-        try:
-            identity = controller._tasks[position]
-        except (IndexError, TypeError):
-            clear_stale_actions()
+        if write_confirmation['active']:
+            status.set('An authorization confirmation is already active. No new write.')
             return
-        if not messagebox.askyesno('Confirm task completion',
-                                   'Complete this one task? No automatic retry.'):
-            status.set('Cancelled; no write performed.')
-            return
+        write_confirmation['active'] = True
         try:
-            confirmation_still_current('task', position, original_matter, identity)
-            result=controller.complete(position, True)
-            if result.status != 'committed_refresh_unresolved':
-                display_counts()
-            else:
-                task_list.delete(0,'end')
-                review_list.delete(0,'end')
-            status.set(result.message)
-            update_controls()
-            notify_uncertain_result(result)
-        except (Denied, Invalid, Stale, EvidenceInvalid):
-            status.set('Task rejected: unauthorized or stale. Reopen read-only.')
-            clear_stale_actions()
+            if not task_list.curselection(): return
+            position = task_list.curselection()[0]
+            original_matter = controller._matter_id
+            try:
+                identity = controller._tasks[position]
+            except (IndexError, TypeError):
+                clear_stale_actions()
+                return
+            if not messagebox.askyesno('Confirm task completion',
+                                       'Complete this one task? No automatic retry.'):
+                status.set('Cancelled; no write performed.')
+                return
+            try:
+                confirmation_still_current('task', position, original_matter, identity)
+                result=controller.complete(position, True)
+                if result.status != 'committed_refresh_unresolved':
+                    display_counts()
+                else:
+                    task_list.delete(0,'end')
+                    review_list.delete(0,'end')
+                status.set(result.message)
+                update_controls()
+                notify_uncertain_result(result)
+            except (Denied, Invalid, Stale, EvidenceInvalid):
+                status.set('Task rejected: unauthorized or stale. Reopen read-only.')
+                clear_stale_actions()
+    
+        finally:
+            write_confirmation['active'] = False
 
     def recover():
         try:
