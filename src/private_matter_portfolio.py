@@ -78,10 +78,11 @@ class PrivateMatterPortfolio:
             # Reauthorize all matters AGAIN before publishing a batch result.
             # This detects local changes/revocations between matter readings.
             after = self.operator.matters(token)
-            if (type(after) is not dict
-                    or type(after.get('matters')) is not list
-                    or [x.get('matter_id') for x in after['matters']]
-                       != [x.get('matter_id') for x in before['matters']]):
+            # Compare the entire authorized index, not only matter IDs.
+            # A role downgrade or matter-version update with unchanged IDs
+            # invalidates displayed may_act flags and workload freshness.
+            # Malformed or newly introduced authorization flags also deny.
+            if type(after) is not dict or after != before:
                 raise Denied('Matter portfolio changed during read')
             return PortfolioSnapshot(
                 'mtl.private.portfolio.v1', tuple(items),
