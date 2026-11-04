@@ -6,6 +6,7 @@ import unittest
 
 from src.dual_witness_history import DualWitnessHistory
 from src.cross_observer_history import verify_observers, CrossObserverRound
+from src.read_only_pin_quorum import ReadOnlyPinQuorum
 from src.independent_checkpoint_boundary import (
     CheckpointReadbackBoundary, PinnedCheckpoint, _digest)
 from src.secure_engine import Denied
@@ -237,6 +238,89 @@ class CrossObserverContinuityTests(unittest.TestCase):
         pairs[1][1].sign()
         with self.assertRaises(Denied):
             self.check(gates,event='d'*64)
+
+
+class _FixturePinSource:
+    def __init__(self, pin):
+        self.pin=pin
+        self.failure=False
+        self.after=None
+        self.reads=0
+    def read_pin(self):
+        self.reads+=1
+        if self.failure:raise OSError('fictional pin service unavailable')
+        if self.reads>1 and self.after is not None:
+            return self.after
+        return self.pin
+
+
+class ExternalPinReadbackTests(unittest.TestCase):
+    def setUp(self):
+        fixture=CrossObserverContinuityTests()
+        _,early=fixture.make_observers()
+        self.prior=fixture.check(early)
+        _,self.later=fixture.make_observers(
+            sequence=19,prior=self.prior,
+            reservation='c'*64,event='d'*64)
+        self.first=_FixturePinSource(self.prior)
+        self.second=_FixturePinSource(self.prior)
+        self.verifier=ReadOnlyPinQuorum(primary=self.first,
+                                        secondary=self.second)
+
+    def verify(self):
+        return self.verifier.verify(
+            self.later[0],self.later[1],
+            reservation='c'*64,event_digest='d'*64)
+
+    def test_two_readonly_predecessor_sources_match(self):
+        observed=self.verify()
+        self.assertEqual(observed.sequence,19)
+        self.assertEqual((self.first.reads,self.second.reads),(2,2))
+        self.assertFalse(observed.independently_custodied)
+        self.assertFalse(observed.permits_fence_clearance)
+
+    def test_single_source_or_shared_reader_rejected(self):
+        with self.assertRaises(Denied):
+            ReadOnlyPinQuorum(primary=self.first,secondary=self.first)
+        with self.assertRaises(Denied):
+            ReadOnlyPinQuorum(primary=self.first,secondary=None)
+
+    def test_split_pin_across_two_sources_rejected(self):
+        self.second.pin=CrossObserverRound(
+            self.prior.sequence,self.prior.signer_a,self.prior.signer_b,
+            '0'*64,self.prior.head_b)
+        with self.assertRaises(Denied):self.verify()
+
+    def test_rolled_back_one_source_rejected(self):
+        self.second.pin=CrossObserverRound(
+            self.prior.sequence-1,self.prior.signer_a,self.prior.signer_b,
+            self.prior.head_a,self.prior.head_b)
+        with self.assertRaises(Denied):self.verify()
+
+    def test_source_changes_between_pre_and_post_readback_rejected(self):
+        self.second.after=CrossObserverRound(
+            self.prior.sequence+1,self.prior.signer_a,self.prior.signer_b,
+            self.prior.head_a,self.prior.head_b)
+        with self.assertRaises(Denied):self.verify()
+
+    def test_malformed_pin_and_missing_source_fail_closed(self):
+        self.first.pin={'sequence':self.prior.sequence}
+        with self.assertRaises(Denied):self.verify()
+        self.first.pin=self.prior
+        self.second.failure=True
+        with self.assertRaises(Denied):self.verify()
+
+    def test_external_pin_wrong_signer_rejected(self):
+        self.first.pin=CrossObserverRound(
+            self.prior.sequence,'fictional-rotated-signer',
+            self.prior.signer_b,self.prior.head_a,self.prior.head_b)
+        self.second.pin=self.first.pin
+        with self.assertRaises(Denied):self.verify()
+
+    def test_previous_pin_missing_is_never_trust_on_first_use(self):
+        self.first.pin=None
+        self.second.pin=None
+        with self.assertRaises(Denied):self.verify()
 
 
 
