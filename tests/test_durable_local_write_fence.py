@@ -53,6 +53,87 @@ class DurableLocalWriteFenceTests(unittest.TestCase):
         return self.core.db.execute(
             'SELECT count(*) FROM audit_chain WHERE action=?',(action,)).fetchone()[0]
 
+    def test_task_reservation_readback_after_local_commit_retains_fence(self):
+        from src.task_reconciliation import reconcile_task
+        task=self.client._tasks[0]
+        with patch.object(self.client.operator.workflow,'open',
+                          side_effect=RuntimeError('Lost completion acknowledgment')):
+            result=self.client.complete(0,True)
+        self.assertEqual(result.status,'committed_refresh_unresolved')
+        self.assertTrue(self.fence.is_pending())
+        self.assertEqual(self.fence.pending_kind(),'task')
+        after=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        after.list_matters()
+        after.select(0)
+        self.assertEqual(after.counts(),(0,0))
+        reply=after.reconcile_pending_task_after_restart()
+        self.assertEqual(reply.status,'observed_local_commit')
+        self.assertTrue(self.fence.is_pending())
+        self.assertEqual(self.count('task.complete'),1)
+        self.assertEqual(reconcile_task(self.core,self.editor,self.mid,
+                                       task[0],task[1]).status,'observed_completed')
+        with self.assertRaises(Denied):
+            after.complete(0,True)
+        data=self.fence.path.read_bytes()
+        for secret in (self.editor,self.author,self.mid,task[0]):
+            self.assertNotIn(secret.encode(),data)
+
+    def test_task_reservation_prewrite_crash_readback_retains_fence(self):
+        task=self.client._tasks[0]
+        actor=self.core._identity(self.editor)
+        before=self.core.db.execute(
+            'SELECT COALESCE(MAX(seq),0) FROM audit_chain').fetchone()[0]
+        self.fence.begin(task_identity=(actor['id'],self.mid,task[0],task[1]),
+                         audit_before=before)
+        after=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        after.list_matters()
+        after.select(0)
+        self.assertEqual(after.reconcile_pending_task_after_restart().status,
+                         'observed_local_no_commit')
+        self.assertTrue(self.fence.is_pending())
+        self.assertEqual(self.count('task.complete'),0)
+        with self.assertRaises(Denied):after.complete(0,True)
+
+    def test_task_readback_wrong_actor_and_cross_firm_fail_closed(self):
+        task=self.client._tasks[0]
+        actor=self.core._identity(self.editor)
+        before=self.core.db.execute(
+            'SELECT COALESCE(MAX(seq),0) FROM audit_chain').fetchone()[0]
+        self.fence.begin(task_identity=(actor['id'],self.mid,task[0],task[1]),
+                         audit_before=before)
+        viewer_id,viewer=self.core.provision_user(
+            self.core.db.execute('SELECT firm_id FROM users WHERE id=?',
+                                 (actor['id'],)).fetchone()[0],'Different Reader')
+        self.core.grant(self.author,self.mid,viewer_id,'viewer',
+                        self.core.db.execute('SELECT version FROM matters WHERE id=?',
+                                             (self.mid,)).fetchone()[0])
+        stranger=LocalOperatorController(self.core,viewer,
+                                        durable_fence=LocalWriteFence(self.path))
+        stranger.list_matters()
+        stranger.select(0)
+        with self.assertRaises(Denied):
+            stranger.reconcile_pending_task_after_restart()
+        self.assertTrue(self.fence.is_pending())
+
+    def test_task_reservation_corrupted_fingerprint_never_reconciles(self):
+        task=self.client._tasks[0]
+        actor=self.core._identity(self.editor)
+        before=self.core.db.execute(
+            'SELECT COALESCE(MAX(seq),0) FROM audit_chain').fetchone()[0]
+        self.fence.begin(task_identity=(actor['id'],self.mid,task[0],task[1]),
+                         audit_before=before)
+        with sqlite3.connect(self.fence.path) as db:
+            db.execute("UPDATE fence SET fingerprint=? WHERE slot=1",('0'*64,))
+        after=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        after.list_matters()
+        after.select(0)
+        self.assertEqual(after.reconcile_pending_task_after_restart().status,
+                         'reconciliation_unresolved')
+        self.assertTrue(self.fence.is_pending())
+
     def test_pending_state_survives_restart_without_secrets(self):
         self.fence.begin() # simulate crash after durable reservation
         self.assertTrue(LocalWriteFence(self.path).is_pending())
