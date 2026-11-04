@@ -145,6 +145,42 @@ class TaskExternalAnchorConsistency(unittest.TestCase):
         print('FICTIONAL TASK ANCHOR LATENCY ms: n=30 p50=%.3f p95=%.3f max=%.3f'%
               (p50,p95,max(samples)),flush=True)
 
+    def test_authorization_revoked_during_provider_readback_denied(self):
+        original=self.reader.read_head
+        def revoke_during_readback():
+            self.core.revoke_token(self.token)
+            return original()
+        self.reader.read_head=revoke_during_readback
+        with self.assertRaises(Denied):
+            self.observe()
+        self.assertTrue(self.fence.is_pending())
+
+    def test_local_audit_mutation_during_provider_readback_denied(self):
+        original=self.reader.read_head
+        def concurrent_audit_mutation():
+            self.core.create_task(
+                self.token,self.matter,'Fictional competing task',
+                '2026-10-01T00:00:00Z')
+            return original()
+        self.reader.read_head=concurrent_audit_mutation
+        with self.assertRaises(Denied):
+            self.observe()
+        self.assertTrue(self.fence.is_pending())
+
+    def test_privilege_downgrade_during_provider_readback_denied(self):
+        original=self.reader.read_head
+        # A controlled direct ACL mutation models an independent administrator
+        # changing the grant while signed readback is in progress.
+        def downgrade():
+            self.core.db.execute(
+                "UPDATE grants SET role='viewer' WHERE matter_id=? AND user_id=?",
+                (self.matter,self.uid))
+            return original()
+        self.reader.read_head=downgrade
+        with self.assertRaises(Denied):
+            self.observe()
+        self.assertTrue(self.fence.is_pending())
+
     def test_coordinated_database_and_sidecar_rollback_is_detected(self):
         self.core.close()
         shutil.copy2(self.snapshot_db,self.path)
