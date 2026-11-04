@@ -86,6 +86,73 @@ class AuthorizationTests(unittest.TestCase):
             'SELECT last_seen_at FROM credentials WHERE token_digest=?',
             (digest,)).fetchone()['last_seen_at'],old)
 
+    def test_passive_scope_does_not_leak_to_other_core(self):
+        from datetime import datetime, timezone, timedelta
+        from hashlib import sha256
+        other=SecureCore()
+        try:
+            firm=other.provision_firm('Unrelated Test Firm')
+            _,other_token=other.provision_user(firm,'Another Operator')
+            other.create_matter(other_token,'Unrelated Fictional Matter')
+            digest=sha256(other_token.encode()).hexdigest()
+            previous=(datetime.now(timezone.utc)-timedelta(seconds=120)).isoformat()
+            other.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+                             (previous,digest))
+            with self.core.passive_authorization():
+                self.core.list_matters(self.owner_token)
+                other.list_matters(other_token)
+            actual=other.db.execute(
+                'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+                (digest,)).fetchone()['last_seen_at']
+            self.assertNotEqual(previous,actual)
+        finally:
+            other.close()
+
+    def test_passive_scope_is_thread_local_on_same_core(self):
+        import threading
+        from datetime import datetime, timezone, timedelta
+        from hashlib import sha256
+        digest=sha256(self.editor_token.encode()).hexdigest()
+        previous=(datetime.now(timezone.utc)-timedelta(seconds=120)).isoformat()
+        self.core.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+                             (previous,digest))
+        failures=[]
+        def real_user_action():
+            try:
+                self.core.list_matters(self.editor_token)
+            except Exception as exc:
+                failures.append(str(type(exc).__name__))
+        with self.core.passive_authorization():
+            self.core.list_matters(self.owner_token)
+            actor=threading.Thread(target=real_user_action)
+            actor.start()
+            actor.join(timeout=5)
+            self.assertFalse(actor.is_alive())
+        self.assertEqual(failures,[])
+        actual=self.core.db.execute(
+            'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+            (digest,)).fetchone()['last_seen_at']
+        self.assertNotEqual(previous,actual)
+
+    def test_nested_passive_scope_restores_previous_mode(self):
+        from datetime import datetime, timezone, timedelta
+        from hashlib import sha256
+        digest=sha256(self.owner_token.encode()).hexdigest()
+        previous=(datetime.now(timezone.utc)-timedelta(seconds=120)).isoformat()
+        self.core.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+                             (previous,digest))
+        with self.core.passive_authorization():
+            with self.core.passive_authorization():
+                self.core.list_matters(self.owner_token)
+            self.core.list_matters(self.owner_token)
+            self.assertEqual(previous,self.core.db.execute(
+                'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+                (digest,)).fetchone()['last_seen_at'])
+        self.core.list_matters(self.owner_token)
+        self.assertNotEqual(previous,self.core.db.execute(
+            'SELECT last_seen_at FROM credentials WHERE token_digest=?',
+            (digest,)).fetchone()['last_seen_at'])
+
     def test_revocation(self):
         self.core.revoke_token(self.owner_token)
         self.assertDenied(self.core.list_matters,self.owner_token)
