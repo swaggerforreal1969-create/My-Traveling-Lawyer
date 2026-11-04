@@ -124,12 +124,20 @@ class LocalWriteFence:
         return sha256(json.dumps([salt, *identity],
                       separators=(',', ':'), ensure_ascii=True).encode('utf-8')).hexdigest()
 
-    def begin(self, *, review_identity=None, audit_before=None):
+    def begin(self, *, review_identity=None, task_identity=None, audit_before=None):
         """Reserve one write. For a review store ONLY a salted fingerprint.
 
         Identity order: (actor_id, matter_id, evidence_id, observation_id).
         This is a local matching hint, not a cryptographic custody witness.
         """
+        if review_identity is not None and task_identity is not None:
+            raise Denied('One exact reservation identity required')
+        if task_identity is not None:
+            if (not isinstance(task_identity,tuple) or len(task_identity)!=4
+                    or not all(isinstance(x,str) and x for x in task_identity[:3])
+                    or type(task_identity[3]) is not int or task_identity[3]<1
+                    or type(audit_before) is not int or audit_before<0):
+                raise Denied('Invalid task reservation; no write permitted')
         if review_identity is not None:
             if (not isinstance(review_identity, tuple)
                     or len(review_identity) != 4
@@ -137,9 +145,9 @@ class LocalWriteFence:
                     or type(audit_before) is not int or audit_before < 0):
                 raise Denied('Invalid review reservation; no write permitted')
         reservation = token_hex(32)  # exact per-write CAS identity; never displayed
-        salt = token_hex(24) if review_identity is not None else None
-        fingerprint = (self._fingerprint(salt, review_identity)
-                       if review_identity is not None else None)
+        identity = review_identity if review_identity is not None else task_identity
+        salt = token_hex(24) if identity is not None else None
+        fingerprint = self._fingerprint(salt, identity) if identity is not None else None
         self._verify_binding()
         try:
             with self._connection() as db:
@@ -151,7 +159,8 @@ class LocalWriteFence:
                 db.execute('''INSERT INTO fence
                     (slot,state,kind,salt,fingerprint,audit_before,reservation)
                     VALUES(1,'pending',?,?,?,?,?)''',
-                    ('review' if review_identity is not None else 'unknown',
+                    ('review' if review_identity is not None else
+                     'task' if task_identity is not None else 'unknown',
                      salt, fingerprint, audit_before, reservation))
                 db.execute('COMMIT')
                 return reservation
@@ -187,6 +196,39 @@ class LocalWriteFence:
             raise
         except (sqlite3.Error,OSError) as error:
             raise Denied('Recovery reservation unreadable') from error
+
+    def pending_task_matches(self, identity, audit_seq=None):
+        """Read-only exact local task identity check; not custody evidence.
+
+        Caller must independently authorize actor/matter, verify task row,
+        and verify the task-specific audit event before using this result.
+        Never changes or clears the pending reservation.
+        """
+        if (not isinstance(identity,tuple) or len(identity)!=4
+                or not all(isinstance(x,str) and x for x in identity[:3])
+                or type(identity[3]) is not int or identity[3]<1
+                or (audit_seq is not None and type(audit_seq) is not int)):
+            raise Denied('Invalid task recovery candidate')
+        self._verify_binding()
+        try:
+            with self._connection() as db:
+                rows=db.execute(
+                    'SELECT kind,salt,fingerprint,audit_before FROM fence WHERE slot=1'
+                ).fetchall()
+                if len(rows)!=1 or rows[0][0]!='task':
+                    raise Denied('No recoverable task reservation')
+                _,salt,fingerprint,floor=rows[0]
+                if (not isinstance(salt,str) or len(salt)!=48
+                        or not isinstance(fingerprint,str) or len(fingerprint)!=64
+                        or type(floor) is not int or floor<0):
+                    raise Denied('Invalid task reservation metadata')
+                if audit_seq is not None and audit_seq<=floor:
+                    return False
+                return self._fingerprint(salt,identity)==fingerprint
+        except Denied:
+            raise
+        except (sqlite3.Error,OSError) as error:
+            raise Denied('Task reservation unreadable') from error
 
     def pending_reservation(self):
         """Return only an opaque local CAS version, not authorization evidence.
