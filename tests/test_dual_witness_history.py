@@ -5,6 +5,7 @@ import json
 import unittest
 
 from src.dual_witness_history import DualWitnessHistory
+from src.cross_observer_history import verify_observers, CrossObserverRound
 from src.independent_checkpoint_boundary import (
     CheckpointReadbackBoundary, PinnedCheckpoint, _digest)
 from src.secure_engine import Denied
@@ -140,6 +141,103 @@ class DualWitnessHistoryTests(unittest.TestCase):
         self.two.sign()
         with self.assertRaises(Denied):
             self.check()
+
+
+
+class CrossObserverContinuityTests(unittest.TestCase):
+    def make_observers(self, sequence=18, prior=None, reservation=RES, event=EVENT):
+        previous_a=prior.head_a if prior else 'f'*64
+        previous_b=prior.head_b if prior else 'f'*64
+        pairs=[]
+        for _ in range(2):
+            one=FictionalWitness('fictional-signer-A',b'fictional-only-A',
+                sequence=sequence,prev=previous_a,reservation=reservation,event=event)
+            two=FictionalWitness('fictional-signer-B',b'fictional-only-B',
+                sequence=sequence,prev=previous_b,reservation=reservation,event=event)
+            pairs.append((one,two))
+        gates=[DualWitnessHistory(first=a.boundary(),second=b.boundary())
+               for a,b in pairs]
+        return pairs,gates
+
+    def check(self,gates, prior=None, reservation=RES, event=EVENT):
+        return verify_observers(gates[0],gates[1],reservation=reservation,
+                                event_digest=event,previous=prior)
+
+    def test_two_observers_same_signed_heads_no_write_grant(self):
+        pairs,gates=self.make_observers()
+        proof=self.check(gates)
+        self.assertEqual(proof.sequence,18)
+        self.assertFalse(proof.independently_custodied)
+        self.assertFalse(proof.permits_fence_clearance)
+        self.assertFalse(proof.permits_write_replay)
+
+    def test_two_contiguous_rounds_with_exact_external_forward_pin(self):
+        _,gates=self.make_observers()
+        prior=self.check(gates)
+        _,later=self.make_observers(sequence=19,prior=prior,
+                                     reservation='c'*64,event='d'*64)
+        nxt=self.check(later,prior=prior,reservation='c'*64,event='d'*64)
+        self.assertEqual(nxt.sequence,prior.sequence+1)
+        self.assertNotEqual(nxt.head_a,prior.head_a)
+
+    def test_prior_commit_replay_or_skipped_generation_denied(self):
+        _,gates=self.make_observers()
+        prior=self.check(gates)
+        for seq in (18,20):
+            with self.subTest(seq=seq):
+                _,next_gates=self.make_observers(sequence=seq,prior=prior)
+                with self.assertRaises(Denied):
+                    self.check(next_gates,prior=prior)
+
+    def test_forged_prior_pin_or_changed_signer_denied(self):
+        _,gates=self.make_observers()
+        prior=self.check(gates)
+        _,later=self.make_observers(sequence=19,prior=prior)
+        forged=CrossObserverRound(prior.sequence,prior.signer_a,prior.signer_b,
+                                  '0'*64,prior.head_b)
+        with self.assertRaises(Denied):
+            self.check(later,prior=forged)
+        rotated=CrossObserverRound(prior.sequence,'new-signer',prior.signer_b,
+                                   prior.head_a,prior.head_b)
+        with self.assertRaises(Denied):
+            self.check(later,prior=rotated)
+
+    def test_split_view_from_same_signer_fails_closed(self):
+        pairs,gates=self.make_observers()
+        # A dishonest observer's first signer presents a distinct signed head.
+        pairs[1][0].head['previous']='0'*64
+        pairs[1][0].pin=PinnedCheckpoint(17,'0'*64,'fictional-signer-A')
+        pairs[1][0].sign()
+        # Both snapshots are individually signed, but trust pins diverge.
+        with self.assertRaises(Denied):
+            self.check(gates)
+
+    def test_same_reader_reused_across_observers_rejected(self):
+        _,gates=self.make_observers()
+        with self.assertRaises(Denied):
+            verify_observers(gates[0],gates[0],reservation=RES,event_digest=EVENT)
+        shared=DualWitnessHistory(first=gates[0].first,
+                                  second=gates[1].second)
+        with self.assertRaises(Denied):
+            verify_observers(gates[0],shared,reservation=RES,event_digest=EVENT)
+
+    def test_one_missing_witness_fails_no_single_observer_fallback(self):
+        pairs,gates=self.make_observers()
+        pairs[1][1].unavailable=True
+        with self.assertRaises(Denied):
+            self.check(gates)
+
+    def test_cross_observer_stale_signer_rotation_and_wrong_event(self):
+        pairs,gates=self.make_observers()
+        pairs[1][1].head['signer_id']='rogue'
+        pairs[1][1].sign()
+        with self.assertRaises(Denied):
+            self.check(gates)
+        pairs[1][1].head['signer_id']='fictional-signer-B'
+        pairs[1][1].sign()
+        with self.assertRaises(Denied):
+            self.check(gates,event='d'*64)
+
 
 
 if __name__=='__main__':
