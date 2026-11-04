@@ -140,9 +140,14 @@ class AtomicCustodyProcessTests(unittest.TestCase):
                    env=env,cwd=str(ROOT),text=True)
                for cmd,_,env in calls]
         try:
-            answers=[]
+            # Feed BOTH subprocesses before awaiting either; both then race
+            # for BEGIN IMMEDIATE against the same predecessor generation.
             for p,(_,data,_) in zip(procs,calls):
-                out,err=p.communicate(data,timeout=14)
+                p.stdin.write(data)
+                p.stdin.flush()
+            answers=[]
+            for p in procs:
+                out,err=p.communicate(timeout=14)
                 self.assertEqual(p.returncode,0,err)
                 answers.append(json.loads(out)['status'])
             self.assertEqual(sorted(answers),['ack','denied'])
