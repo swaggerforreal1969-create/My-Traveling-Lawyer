@@ -123,6 +123,52 @@ class PrivateOperatorTests(unittest.TestCase):
         ).fetchone()[0],1)
         self.assertTrue(self.core.verify_audit())
 
+    def test_single_operator_completion_returns_fresh_confidential_portfolio(self):
+        previous=self.operator.portfolio(self.reviewer,now=self.now)
+        self.assertEqual(previous.total_open_tasks,1)
+        result=self.operator.complete_task_and_refresh_portfolio(
+            self.reviewer,self.mid,self.task['id'],1,now=self.now)
+        self.assertEqual(result.status,'completed_and_refreshed')
+        self.assertIsNotNone(result.portfolio)
+        self.assertEqual(result.portfolio.total_open_tasks,0)
+        self.assertEqual(result.portfolio.total_second_reviews,1)
+        self.assertFalse(result.legal_deadlines_verified)
+        self.assertFalse(result.court_filing_approved)
+        self.assertFalse(result.independent_custody_verified)
+        self.assertEqual(self.screen().open_task_count,0)
+        self.assertEqual(self.operator.complete_task_and_refresh_portfolio(
+            self.reviewer,self.mid,self.task['id'],1,now=self.now
+        ).status,'observed_completed_no_write')
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+
+    def test_postcommit_portfolio_failure_is_unresolved_without_replay(self):
+        with patch.object(self.operator,'portfolio',
+                          side_effect=RuntimeError('fictional read failure')):
+            result=self.operator.complete_task_and_refresh_portfolio(
+                self.reviewer,self.mid,self.task['id'],1,now=self.now)
+        self.assertEqual(result.status,'portfolio_refresh_unresolved')
+        self.assertIsNone(result.portfolio)
+        self.assertEqual(self.operator.portfolio(self.reviewer,now=self.now)
+                         .total_open_tasks,0)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+
+    def test_unauthorized_portfolio_action_does_not_write(self):
+        with self.assertRaises(Denied):
+            self.operator.complete_task_and_refresh_portfolio(
+                self.viewer,self.mid,self.task['id'],1,now=self.now)
+        with self.assertRaises(Denied):
+            self.operator.complete_task_and_refresh_portfolio(
+                self.outside,self.mid,self.task['id'],1,now=self.now)
+        self.assertEqual(self.operator.portfolio(self.reviewer,now=self.now)
+                         .total_open_tasks,1)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],0)
+
     def test_viewer_can_open_minimal_readiness_but_never_review_or_complete(self):
         view = self.screen(self.viewer)
         self.assertFalse(view.can_complete_tasks)
