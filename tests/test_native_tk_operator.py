@@ -281,6 +281,45 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(self.core.db.execute(
             'SELECT count(*) FROM tasks WHERE completed=1').fetchone()[0], 0)
 
+    def test_nested_task_confirmation_cannot_open_second_confirmation(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        counter = []
+        def nested(*args, **kwargs):
+            counter.append('first')
+            self.buttons['Complete task'].invoke()
+            return False
+        with patch.object(messagebox, 'askyesno', side_effect=nested):
+            self.buttons['Complete task'].invoke()
+        self.assertEqual(counter, ['first'])
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM tasks WHERE completed=1').fetchone()[0], 0)
+
+    def test_review_confirmation_blocks_nested_task_confirmation(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[1].selection_set(0)
+        self.listboxes[1].event_generate('<<ListboxSelect>>')
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        self.texts[0].insert('1.0', 'Fictional reviewer note for testing only')
+        count = []
+        def nested(*args, **kwargs):
+            count.append('review')
+            self.buttons['Complete task'].invoke()
+            return False
+        with patch.object(messagebox, 'askyesno', side_effect=nested):
+            self.buttons['Record review'].invoke()
+        self.assertEqual(count, ['review'])
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 0)
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM tasks WHERE completed=1').fetchone()[0], 0)
+
     def test_real_confirm_dialog_rejection_has_zero_writes(self):
         self.open()
         self.select_matter()
