@@ -29,6 +29,7 @@ class OperatorScreen:
 class PortfolioCompletionAction:
     status: str
     portfolio: object = None
+    copy_safe_summary: str = None
     legal_deadlines_verified: bool = False
     court_filing_approved: bool = False
     independent_custody_verified: bool = False
@@ -116,12 +117,16 @@ class PrivateAttorneyOperator:
                                  'observed_completed_no_write'):
             raise Invalid('Unknown completion outcome')
         try:
+            # Generate display output from the SAME freshly authorized snapshot.
+            # A second portfolio() call could read a different matter version.
+            from .private_matter_portfolio import render_portfolio_plain
             current = self.portfolio(token, now=now)
+            summary = render_portfolio_plain(current)
         except Exception:
-            # A write may already be committed. Fail closed; the operator must
-            # reopen the portfolio read-only. Never silently complete again.
+            # Completion may already be committed; never repeat it or
+            # accidentally expose an older or partially rendered portfolio.
             return PortfolioCompletionAction('portfolio_refresh_unresolved')
-        return PortfolioCompletionAction(action.status, current)
+        return PortfolioCompletionAction(action.status, current, summary)
 
     def reconcile_research(self, token, matter_id, operation, record_id):
         return self.workflow.reconcile_research(token, matter_id, operation, record_id)
