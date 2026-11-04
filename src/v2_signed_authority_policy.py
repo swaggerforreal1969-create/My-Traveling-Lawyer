@@ -76,6 +76,11 @@ def authorized_v2_verifier(*, envelope, authority_trust, expected_policy,
     if policy['revoked'] or not policy['valid_from']<=evaluated_at<policy['valid_until']:
         raise Denied('Custody signer expired, revoked or not yet valid')
     pubkey=bytes.fromhex(policy['public_key_hex'])
+    # An authority root must not also be admitted as a custody receipt signer.
+    # Distinct names alone do not provide cryptographic role separation.
+    if (policy['signer_id']==authority_trust.signer_id
+            or pubkey==authority_trust.public_key_raw):
+        raise Denied('Authority and custody signer identity must be distinct')
     signer_trust=PinnedEd25519Trust(
         signer_id=policy['signer_id'],
         public_key_raw=pubkey,
