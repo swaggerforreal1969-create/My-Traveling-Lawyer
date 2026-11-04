@@ -50,6 +50,24 @@ class ReadOnlyPinQuorum:
         self.primary=primary
         self.secondary=secondary
 
+    def verify_authenticated(self, observer_a, observer_b, *,
+                             reservation, event_digest, expected_pin):
+        """Strict opt-in read-only boundary: no anonymous or unpinned sources.
+
+        Existing verify() is experimental and intentionally accepts offline
+        unsigned fixture readers for compatibility. Callers demanding an
+        authenticated custody CONTRACT must use this entrypoint. Real provider
+        independence and rollback-proof retention still need external proof.
+        """
+        from .authenticated_pin_source import AuthenticatedPinSource
+        if (type(self.primary) is not AuthenticatedPinSource
+                or type(self.secondary) is not AuthenticatedPinSource
+                or self.primary.signer_id == self.secondary.signer_id
+                or type(expected_pin) is not CrossObserverRound):
+            raise Denied('Authenticated pin sources and external anchor required')
+        return self.verify(observer_a,observer_b,reservation=reservation,
+                           event_digest=event_digest,expected_pin=expected_pin)
+
     @staticmethod
     def _read(source):
         try:

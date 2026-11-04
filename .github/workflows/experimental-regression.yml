@@ -155,6 +155,10 @@ jobs:
         run: |
           python -m py_compile src/authenticated_pin_source.py src/read_only_pin_quorum.py tests/test_authenticated_pin_source.py
           python -m unittest discover -s tests -p 'test_authenticated_pin_source.py' -q
+      - name: Authenticated separate-process pin restart and rollback acceptance
+        run: |
+          python -m py_compile src/offline_signed_pin_fixture.py src/read_only_pin_quorum.py tests/test_authenticated_pin_process.py
+          python -m unittest discover -s tests -p 'test_authenticated_pin_process.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
