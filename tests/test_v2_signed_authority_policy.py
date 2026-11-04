@@ -90,6 +90,25 @@ class SignedAuthorityPolicyTests(unittest.TestCase):
         with self.assertRaises(Denied):
             self.verified(authority_trust=replace(self.root,revoked=True))
 
+    def test_authority_cannot_sign_custody_receipts_under_an_alias(self):
+        # Attack: reuse the authority public key as the approved custody key.
+        # The signature and external pin are otherwise fully valid.
+        changed=dict(self.policy,public_key_hex=rawkey(self.authority).hex())
+        pinned=AuthorityPolicyPin(7,hashlib.sha256(
+            canonical(changed)).hexdigest())
+        with self.assertRaises(Denied):
+            self.verified(envelope=self.sign_policy(changed),
+                          expected_policy=pinned)
+
+    def test_authority_signer_id_cannot_be_reused_for_custody(self):
+        # Even a different signing key may not share the policy root's role.
+        changed=dict(self.policy,signer_id=AUTH)
+        pinned=AuthorityPolicyPin(7,hashlib.sha256(
+            canonical(changed)).hexdigest())
+        with self.assertRaises(Denied):
+            self.verified(envelope=self.sign_policy(changed),
+                          expected_signer=AUTH,expected_policy=pinned)
+
     def test_tampering_signature_or_schema_denied(self):
         with self.assertRaises(Denied):
             self.verified(envelope={'policy':dict(self.policy),

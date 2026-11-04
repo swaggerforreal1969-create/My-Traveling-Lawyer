@@ -273,3 +273,21 @@ jobs:
         run: python -m compileall -q src tests
       - name: Diagnostic full published-tree regression (not release acceptance)
         run: python -m unittest discover -s tests -q
+
+  signed-policy-isolation:
+    name: Signed authority policy isolated acceptance (not release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned asymmetric verifier dependency
+        run: python -m pip install --disable-pip-version-check "cryptography==46.0.4"
+      - name: Compile and execute all authority-policy adversarial tests
+        run: |
+          python -m py_compile src/v2_signed_authority_policy.py src/v2_asymmetric_trust.py tests/test_v2_signed_authority_policy.py
+          python -m unittest discover -s tests -p 'test_v2_signed_authority_policy.py' -v
+      - name: Verify standalone Ed25519 pin compatibility
+        run: python -m unittest discover -s tests -p 'test_v2_asymmetric_trust.py' -v
