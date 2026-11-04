@@ -55,6 +55,33 @@ class HistoricalSignedRecoveryTests(unittest.TestCase):
         self.assertFalse(found.permits_write_replay)
         self.assertFalse(found.permits_fence_clearance)
 
+    def test_provider_neutral_transport_historical_readback(self):
+        from src.provider_neutral_custody_client import (
+            AuthenticatedCustodyTransport,CustodyClient)
+        def request(op,body):
+            if body.get('credential')!='test-credential':
+                raise Denied('Offline credential revoked or absent')
+            if op=='read_head':return self.provider.read_head()
+            if op=='read_head_at':return self.provider.read_head_at(body['sequence'])
+            if op=='read_event':return self.provider.read_event(body['sequence'])
+            raise Denied('Unsupported offline operation')
+        client=CustodyClient(
+            transport=AuthenticatedCustodyTransport(
+                request=request,transport_authenticated=True),
+            pinned=PIN,verify_signature=verify)
+        recovered=client.reconcile_historical_read_only(
+            credential='test-credential',
+            reservation=self.reservations[1],
+            event_digest=self.events[1],retained_latest=self.latest)
+        self.assertEqual(recovered.operation_sequence,2)
+        self.assertFalse(recovered.permits_write_replay)
+        self.assertFalse(recovered.permits_fence_clearance)
+        with self.assertRaises(Denied):
+            client.reconcile_historical_read_only(
+                credential='revoked',
+                reservation=self.reservations[1],
+                event_digest=self.events[1],retained_latest=self.latest)
+
     def test_first_and_last_operations_are_both_recoverable(self):
         self.assertEqual(self.recover(0).operation_sequence,1)
         self.assertEqual(self.recover(2).operation_sequence,3)
