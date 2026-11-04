@@ -166,9 +166,13 @@ class AtomicCustodyProcessTests(unittest.TestCase):
                   stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                   cwd=str(ROOT),env=env,text=True)
             try:
+                # Release request input before measuring contention. Without
+                # this, the child waits for stdin and never competes for lock.
+                writer.stdin.write(data); writer.stdin.flush()
                 time.sleep(0.25)
+                self.assertIsNone(writer.poll(), 'Writer did not wait for live SQLite lock')
                 holder.stdin.write('\n');holder.stdin.flush()
-                out,err=writer.communicate(data,timeout=14)
+                out,err=writer.communicate(timeout=14)
                 elapsed=(time.perf_counter()-started)*1000
                 self.assertEqual(writer.returncode,0,err)
                 self.assertEqual(json.loads(out)['status'],'ack')
