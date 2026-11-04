@@ -277,21 +277,36 @@ class SecureCore:
             return {'token':token,'expires_at':expiry}
 
     def complete_task(self,token,task_id,expected_version):
-        """Atomic, permission checked, optimistic task completion."""
+        """Serialize credential, ACL, version and task mutation with writers.
+
+        BEGIN IMMEDIATE acquires the SQLite writer reservation BEFORE reading
+        session and ACL state. A second independent connection may revoke or
+        downgrade before this admission or after it commits, but cannot change
+        authority midway through the protected operation. No retry is made.
+        """
         if not isinstance(task_id,str) or not (1<=len(task_id)<=64) or type(expected_version)!=int or expected_version<1:
             raise Invalid('Invalid task completion request')
-        with self.lock,self.db:
-            u=self._identity(token)
-            row=self.db.execute('SELECT matter_id,version,completed FROM tasks WHERE id=?',(task_id,)).fetchone()
-            if row is None:raise Denied('Access denied')
-            self._role(u,row['matter_id'],('owner','editor'))
-            if row['version']!=expected_version:raise Stale('Version changed')
-            if row['completed']:raise Stale('Task already completed')
-            changed=self.db.execute('UPDATE tasks SET completed=1,version=version+1 WHERE id=? AND completed=0 AND version=?',
-                                    (task_id,expected_version))
-            if changed.rowcount!=1:raise Stale('Version changed')
-            self._audit(u['id'],'task.complete',task_id)
-            return {'task_id':task_id,'version':expected_version+1,'completed':True}
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Task admission requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                row=self.db.execute('SELECT matter_id,version,completed FROM tasks WHERE id=?',(task_id,)).fetchone()
+                if row is None:raise Denied('Access denied')
+                self._role(u,row['matter_id'],('owner','editor'))
+                if row['version']!=expected_version:raise Stale('Version changed')
+                if row['completed']:raise Stale('Task already completed')
+                changed=self.db.execute('UPDATE tasks SET completed=1,version=version+1 WHERE id=? AND completed=0 AND version=?',
+                                        (task_id,expected_version))
+                if changed.rowcount!=1:raise Stale('Version changed')
+                self._audit(u['id'],'task.complete',task_id)
+                result={'task_id':task_id,'version':expected_version+1,'completed':True}
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def audit_head(self):
         # Local audit head; not independently durable by itself.
