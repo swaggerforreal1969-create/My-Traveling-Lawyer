@@ -135,6 +135,10 @@ jobs:
         run: |
           python -m py_compile src/private_matter_portfolio.py src/private_attorney_operator.py tests/test_private_matter_portfolio.py
           python -m unittest discover -s tests -p 'test_private_matter_portfolio.py' -q
+      - name: Independent subprocess SIGKILL task finality acceptance
+        run: |
+          python -m py_compile tests/test_atomic_task_crash.py
+          python -m unittest discover -s tests -p 'test_atomic_task_crash.py' -q
       - name: Required-source fail-closed check (all 42 preserved paths)
         run: |
           python - <<'PY'
