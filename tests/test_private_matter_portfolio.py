@@ -83,6 +83,49 @@ class PrivateMatterPortfolioTests(unittest.TestCase):
             with self.assertRaises(Denied):
                 self.operator.portfolio(self.editor)
 
+    def test_role_downgrade_after_read_denies_stale_editor_badge(self):
+        real=self.operator.matters
+        calls=[0]
+        def role_drift(token):
+            calls[0]+=1
+            index=real(token)
+            if calls[0]>1:
+                records=[dict(row) for row in index['matters']]
+                records[0]['role']='viewer'
+                return dict(index,matters=records)
+            return index
+        with patch.object(self.operator,'matters',side_effect=role_drift):
+            with self.assertRaises(Denied):
+                self.operator.portfolio(self.editor)
+
+    def test_matter_version_drift_after_read_denies_stale_portfolio(self):
+        real=self.operator.matters
+        calls=[0]
+        def version_drift(token):
+            calls[0]+=1
+            index=real(token)
+            if calls[0]>1:
+                records=[dict(row) for row in index['matters']]
+                records[0]['version']+=1
+                return dict(index,matters=records)
+            return index
+        with patch.object(self.operator,'matters',side_effect=version_drift):
+            with self.assertRaises(Denied):
+                self.operator.portfolio(self.editor)
+
+    def test_malformed_final_index_denies_without_attribute_error(self):
+        real=self.operator.matters
+        calls=[0]
+        def malformed(token):
+            calls[0]+=1
+            index=real(token)
+            if calls[0]>1:
+                return dict(index,matters=[None])
+            return index
+        with patch.object(self.operator,'matters',side_effect=malformed):
+            with self.assertRaises(Denied):
+                self.operator.portfolio(self.editor)
+
     def test_mid_batch_reauthorization_failure_returns_no_partial_result(self):
         real=self.operator.select_matter
         calls=[0]
