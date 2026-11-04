@@ -103,6 +103,31 @@ class TaskExternalAnchorConsistency(unittest.TestCase):
         self.assertFalse(result.permits_fence_clearance)
         self.assertTrue(self.fence.is_pending())
 
+    def test_provider_readback_never_holds_local_core_lock(self):
+        import threading
+        observed=[]
+        parent=self
+        original=self.reader.read_head
+        def challenged_read_head():
+            done=threading.Event()
+            def independent_local_read():
+                try:
+                    parent.core.audit_head()
+                    observed.append('local_read_completed')
+                finally:
+                    done.set()
+            worker=threading.Thread(target=independent_local_read)
+            worker.start()
+            if not done.wait(2):
+                raise TimeoutError('Provider read blocked by application lock')
+            worker.join(timeout=2)
+            return original()
+        self.reader.read_head=challenged_read_head
+        result=self.observe()
+        self.assertEqual(result.status,'local_and_signed_checkpoint_consistent')
+        self.assertEqual(observed,['local_read_completed'])
+        self.assertTrue(self.fence.is_pending())
+
     def test_coordinated_database_and_sidecar_rollback_is_detected(self):
         self.core.close()
         shutil.copy2(self.snapshot_db,self.path)
