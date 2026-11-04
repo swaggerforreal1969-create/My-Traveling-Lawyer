@@ -22,6 +22,14 @@ class PinnedReadbackObservation:
     permits_fence_clearance: bool = False
 
 
+class _ConstantPinSource:
+    """A typed already-held anchor, never fetched or trust-on-first-use."""
+    def __init__(self, value):
+        self.value=value
+    def read_pin(self):
+        return self.value
+
+
 class ReadOnlyPinQuorum:
     """Compare separately retained predecessor pins before/after readback."""
 
@@ -50,11 +58,23 @@ class ReadOnlyPinQuorum:
             raise Denied('Malformed predecessor pin; no readback permitted')
         return value
 
-    def verify(self, observer_a, observer_b, *, reservation, event_digest):
+    def verify(self, observer_a, observer_b, *, reservation, event_digest,
+               expected_pin=None):
+        """Optional externally held exact pin prevents coordinated reader rollback.
+
+        The caller MUST independently authenticate/retain expected_pin. An
+        attacker-controlled local copy does not provide rollback resistance.
+        """
+        if expected_pin is not None:
+            if (type(expected_pin) is not CrossObserverRound
+                    or self._read(_ConstantPinSource(expected_pin))!=expected_pin):
+                raise Denied('Invalid externally held predecessor anchor')
         first=self._read(self.primary)
         second=self._read(self.secondary)
         if first != second:
             raise Denied('Predecessor sources disagree or are rolled back')
+        if expected_pin is not None and first != expected_pin:
+            raise Denied('Both pin readers diverge from externally held anchor')
         result=verify_observers(observer_a,observer_b,
                                 reservation=reservation,
                                 event_digest=event_digest,previous=first)
@@ -62,7 +82,8 @@ class ReadOnlyPinQuorum:
         # a result if their head changed or they served divergent snapshots.
         after_primary=self._read(self.primary)
         after_secondary=self._read(self.secondary)
-        if after_primary != first or after_secondary != first:
+        if (after_primary != first or after_secondary != first
+                or (expected_pin is not None and after_primary != expected_pin)):
             raise Denied('Predecessor changed during signed readback')
         return PinnedReadbackObservation(
             result.sequence,result.head_a,result.head_b)
