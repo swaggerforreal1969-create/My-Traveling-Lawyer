@@ -22,7 +22,7 @@ class AuthenticatedCustodyTransport:
         self._request = request
 
     def exchange(self, operation, body):
-        if operation not in ('admit', 'read_head', 'read_event'):
+        if operation not in ('admit', 'read_head', 'read_event', 'read_head_at'):
             raise Denied('Unsupported custody operation')
         if type(body) is not dict:
             raise Denied('Invalid custody request')
@@ -44,6 +44,10 @@ class _Reader:
 
     def read_event(self, seq):
         return self.wire.exchange('read_event',
+                                  {'credential':self.credential, 'sequence':seq})
+
+    def read_head_at(self, seq):
+        return self.wire.exchange('read_head_at',
                                   {'credential':self.credential, 'sequence':seq})
 
 
@@ -110,3 +114,21 @@ class CustodyClient:
             proposal=acknowledgment)
         return CustodyObservation('local_or_provider_readback_observed',
                                   result.sequence,result.head_digest)
+
+    def reconcile_historical_read_only(self, *, credential, reservation,
+                                       event_digest, retained_latest,
+                                       max_events=16):
+        """Exact signed historical operation after latest tip has advanced.
+
+        The independently retained latest tip MUST be supplied by the caller.
+        The local application does not infer it, learn trust on first use,
+        authenticate v1 nonce identity, or clear a write fence.
+        """
+        from .historical_custody_readback import HistoricalCustodyReadback
+        verifier=HistoricalCustodyReadback(
+            provider=_Reader(self.transport,credential),
+            verify_signature=self.verify_signature,
+            predecessor=self.pinned,
+            retained_latest=retained_latest,
+            max_events=max_events)
+        return verifier.verify(reservation=reservation,event_digest=event_digest)
