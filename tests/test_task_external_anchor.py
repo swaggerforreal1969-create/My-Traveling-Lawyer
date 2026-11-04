@@ -169,12 +169,8 @@ class TaskExternalAnchorConsistency(unittest.TestCase):
 
     def test_privilege_downgrade_during_provider_readback_denied(self):
         original=self.reader.read_head
-        _,owner_token=self.core.provision_user(
-            self.core.db.execute('SELECT id FROM firms LIMIT 1').fetchone()[0],
-            'Fictional independent owner')
-        # Grant this actor ownership is not permitted. Use the existing
-        # principal's self-owned grant and downgrade it directly in the
-        # controlled SQLite fixture to emulate competing role administration.
+        # A controlled direct ACL mutation models an independent administrator
+        # changing the grant while signed readback is in progress.
         def downgrade():
             self.core.db.execute(
                 "UPDATE grants SET role='viewer' WHERE matter_id=? AND user_id=?",
