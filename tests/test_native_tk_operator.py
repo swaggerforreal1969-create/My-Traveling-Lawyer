@@ -81,7 +81,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertGreaterEqual(self.root.winfo_height(), 520)
         self.assertEqual(str(self.buttons['Record review'].cget('state')), 'disabled')
         self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
-        self.assertEqual(str(self.buttons['Recover review'].cget('state')), 'disabled')
+        self.assertEqual(str(self.buttons['Recover write'].cget('state')), 'disabled')
         self.select_matter()
         self.assertEqual(self.listboxes[1].size(), 1)
         self.assertEqual(self.listboxes[2].size(), 1)
