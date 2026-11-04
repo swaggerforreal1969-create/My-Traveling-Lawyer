@@ -27,7 +27,7 @@ class FixtureSignedReader:
         self.sign()
 
     def sign(self):
-        payload=json.dumps(self.reply,sort_keys=True,separators=(',',':'),
+        payload=json.dumps({k:v for k,v in self.reply.items() if k!='signature'},sort_keys=True,separators=(',',':'),
                            ensure_ascii=True).encode('ascii')
         self.reply['signature']=hmac.new(
             self.key,payload,hashlib.sha256).hexdigest()
