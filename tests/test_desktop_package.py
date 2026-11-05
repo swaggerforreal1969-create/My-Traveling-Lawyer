@@ -103,7 +103,7 @@ class PortablePreviewAcceptance(unittest.TestCase):
         self.assertEqual(before.returncode, 0)
         # A damaged published module must block the human launcher too.
         module = root / 'src' / 'offline_pilot.py'
-        module.write_bytes(module.read_bytes() + b'\\n# synthetic damage\\n')
+        module.write_bytes(module.read_bytes() + b'\n# synthetic damage\n')
         denied = subprocess.run(
             [sys.executable, str(helper), '--check'],
             cwd=str(root), text=True, capture_output=True, timeout=35)
@@ -116,7 +116,7 @@ class PortablePreviewAcceptance(unittest.TestCase):
         existing.write_bytes(b'KEEP-SYNTHETIC-DATA')
         result = subprocess.run(
             [sys.executable, 'start_pilot.py'],
-            input='1\\n' + str(existing) + '\\n',
+            input='1\n' + str(existing) + '\n',
             cwd=str(root), text=True, capture_output=True, timeout=35)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(existing.read_bytes(), b'KEEP-SYNTHETIC-DATA')
