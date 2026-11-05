@@ -154,7 +154,7 @@ class PortablePreviewAcceptance(unittest.TestCase):
     def test_real_windows_cmd_starts_verified_pilot_and_cancels(self):
         root = self.extract()
         result = subprocess.run(
-            ['cmd', '/c', 'launch-windows.cmd'], input='\\n\\n',
+            ['cmd', '/c', 'launch-windows.cmd'], input='\n\n',
             cwd=str(root), text=True, capture_output=True, timeout=35)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('FICTIONAL OFFLINE PILOT ONLY', result.stdout)
@@ -165,7 +165,7 @@ class PortablePreviewAcceptance(unittest.TestCase):
     def test_real_macos_command_starts_verified_pilot_and_cancels(self):
         root = self.extract()
         result = subprocess.run(
-            ['/bin/sh', 'launch-macos.command'], input='\\n\\n',
+            ['/bin/sh', 'launch-macos.command'], input='\n\n',
             cwd=str(root), text=True, capture_output=True, timeout=35)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('FICTIONAL OFFLINE PILOT ONLY', result.stdout)
