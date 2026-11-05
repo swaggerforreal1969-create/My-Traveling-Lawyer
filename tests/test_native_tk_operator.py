@@ -406,7 +406,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         times=[0]
         def fail_once(instance):
             times[0]+=1
-            if times[0] == 2:
+            if times[0] == 1:
                 raise RuntimeError('synthetic postcommit GUI refresh loss')
             return original(instance)
         with (patch.object(messagebox,'askyesno',return_value=True),
