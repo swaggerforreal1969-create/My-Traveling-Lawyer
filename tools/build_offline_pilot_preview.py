@@ -116,12 +116,14 @@ def build(output: Path) -> dict:
                 'independent_security_approval': False,
                 'production_use': False}
     assets = {'run_pilot.py': LAUNCHER.encode('utf-8'),
+              'start_pilot.py': (ROOT / 'tools' / 'portable_desktop_start.py').read_bytes(),
               'MANIFEST.json': (json.dumps(manifest,sort_keys=True,indent=2)+'\n').encode(),
               'README.txt': (
                  'FICTIONAL OFFLINE PREVIEW ONLY — NO CLIENT INFORMATION.\n'
                  'Python 3.11+ and working Tk installation required.\n'
                  'Extract the ZIP locally, do not run it within the archive.\n'
                  'Check integrity: python run_pilot.py --verify\n'
+                 'Interactive start: python start_pilot.py\n'
                  'Setup: python run_pilot.py init --database new-fictional.sqlite3\n'
                  'Open: python run_pilot.py open --database new-fictional.sqlite3\n'
                  'Token is entered hidden; keep it out of logs and chats.\n'
