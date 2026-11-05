@@ -75,6 +75,32 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.buttons['Select matter'].invoke()
         self.root.update()
 
+    def test_offline_pilot_opens_real_tk_window_after_database_restart(self):
+        from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
+        path=Path(self.tmp.name)/'fresh-pilot.sqlite3'
+        credentials=initialize_fictional_pilot(path)
+        for attempt in range(2):
+            root, opened_core=open_fictional_pilot(
+                path,credentials['reviewer_token'],run_mainloop=False)
+            try:
+                root.update()
+                self.assertIn('Local Operator',root.title())
+                elements=descendants(root)
+                buttons={w.cget('text'):w for w in elements
+                         if isinstance(w,ttk.Button)}
+                self.assertIn('Workload (read only)',buttons)
+                buttons['Workload (read only)'].invoke()
+                root.update()
+                private=[w.get('1.0','end-1c') for w in elements
+                         if isinstance(w,tk.Text)]
+                self.assertTrue(any('Open user-entered tasks: 1' in s
+                                    for s in private))
+                self.assertTrue(all('Fictional Research Matter' not in s
+                                    for s in private))
+            finally:
+                root.destroy()
+                opened_core.close()
+
     def test_real_widget_layout_focus_and_enabled_actions(self):
         self.open()
         self.assertGreaterEqual(self.root.winfo_width(), 580)

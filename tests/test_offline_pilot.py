@@ -1,0 +1,151 @@
+"""End-to-end offline fictional pilot lifecycle using real SQLite/SecureCore.
+
+No mocked research source, no browser, no network server or real client data.
+"""
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+import os
+import unittest
+
+from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
+from src.secure_engine import SecureCore, Denied
+from src.durable_local_write_fence import LocalWriteFence
+from src.local_operator_gui import LocalOperatorController
+
+
+class OfflinePilotLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.path = Path(self.tmp.name) / 'fictional-pilot.sqlite3'
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def initialize(self):
+        return initialize_fictional_pilot(self.path)
+
+    def test_new_pilot_contains_real_authorized_research_and_task(self):
+        credentials = self.initialize()
+        self.assertTrue(self.path.is_file())
+        self.assertTrue(LocalWriteFence(self.path).path.is_file())
+        with _closing_core(self.path) as core:
+            editor = LocalOperatorController(
+                core, credentials['editor_token'],
+                durable_fence=LocalWriteFence(self.path))
+            self.assertEqual(editor.list_matters(), 1)
+            editor.select(0)
+            # An evidence author cannot serve as their own second-human reviewer.
+            self.assertEqual(editor.counts(), (1, 0))
+            reviewer = LocalOperatorController(
+                core, credentials['reviewer_token'],
+                durable_fence=LocalWriteFence(self.path))
+            self.assertEqual(reviewer.list_matters(), 1)
+            reviewer.select(0)
+            self.assertEqual(reviewer.counts(), (1, 1))
+            self.assertTrue(core.verify_audit())
+        if os.name == 'posix':
+            self.assertEqual(self.path.stat().st_mode & 0o077, 0)
+            self.assertEqual(LocalWriteFence(self.path).path.stat().st_mode & 0o077, 0)
+
+    def test_reinitialize_refuses_overwrite_and_preserves_original_bytes(self):
+        original = self.initialize()
+        before = self.path.read_bytes()
+        with self.assertRaises(Denied):
+            self.initialize()
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(original['database'], self.path)
+
+    def test_missing_parent_and_existing_symlink_denied(self):
+        with self.assertRaises(Denied):
+            initialize_fictional_pilot(self.path.parent / 'absent' / 'pilot.db')
+        if hasattr(os, 'symlink'):
+            other = self.path.parent / 'existing.txt'
+            other.write_text('untouched')
+            os.symlink(other, self.path)
+            with self.assertRaises(Denied):
+                self.initialize()
+            self.assertEqual(other.read_text(), 'untouched')
+
+    def test_invalid_token_fails_before_graphical_window_creation(self):
+        self.initialize()
+        with patch('src.local_operator_gui.launch_gui') as gui:
+            with self.assertRaises(Denied):
+                open_fictional_pilot(self.path, 'fictional-invalid-credential')
+            gui.assert_not_called()
+
+    def test_one_authorized_session_review_completion_and_restart(self):
+        credentials = self.initialize()
+        with _closing_core(self.path) as core:
+            fence = LocalWriteFence(self.path)
+            client = LocalOperatorController(
+                core, credentials['reviewer_token'], durable_fence=fence)
+            self.assertEqual(client.list_matters(), 1)
+            client.select(0)
+            self.assertEqual(client.counts(), (1, 1))
+            consent = client.review(
+                0, 'corroborated_manually',
+                'Independent fictional human reviewed invented evidence', True)
+            self.assertEqual(consent.status, 'review_committed')
+            self.assertEqual(client.counts(), (1, 0))
+            self.assertEqual(client.complete(0, True).status,
+                             'completed_and_refreshed')
+            self.assertFalse(fence.is_pending())
+            self.assertIn('Open user-entered tasks: 0',
+                          client.read_only_current_workload())
+            self.assertTrue(core.verify_audit())
+        # A new SecureCore and GUI controller see committed state, not stale IDs.
+        with _closing_core(self.path) as core:
+            reopened = LocalOperatorController(
+                core, credentials['reviewer_token'],
+                durable_fence=LocalWriteFence(self.path))
+            self.assertEqual(reopened.list_matters(), 1)
+            reopened.select(0)
+            self.assertEqual(reopened.counts(), (0, 0))
+            self.assertEqual(core.db.execute(
+                "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+            ).fetchone()[0], 1)
+
+    def test_lost_completion_readback_survives_reopened_database(self):
+        credentials = self.initialize()
+        with _closing_core(self.path) as core:
+            client = LocalOperatorController(
+                core, credentials['reviewer_token'],
+                durable_fence=LocalWriteFence(self.path))
+            client.list_matters()
+            client.select(0)
+            with patch.object(client, 'refresh',
+                              side_effect=RuntimeError('fictional lost GUI read')):
+                result = client.complete(0, True)
+            self.assertEqual(result.status, 'committed_refresh_unresolved')
+            self.assertTrue(LocalWriteFence(self.path).is_pending())
+        with _closing_core(self.path) as core:
+            restarted = LocalOperatorController(
+                core, credentials['reviewer_token'],
+                durable_fence=LocalWriteFence(self.path))
+            restarted.list_matters()
+            restarted.select(0)
+            self.assertEqual(restarted.counts(), (0, 0))
+            self.assertEqual(restarted.reconcile_pending_task_after_restart().status,
+                             'observed_local_commit')
+            self.assertTrue(LocalWriteFence(self.path).is_pending())
+            with self.assertRaises(Denied):
+                restarted.complete(0, True)
+            self.assertEqual(core.db.execute(
+                "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+            ).fetchone()[0], 1)
+
+
+class _closing_core:
+    def __init__(self, path):
+        self.core = SecureCore(path)
+
+    def __enter__(self):
+        return self.core
+
+    def __exit__(self, *args):
+        self.core.close()
+
+
+if __name__ == '__main__':
+    unittest.main()
