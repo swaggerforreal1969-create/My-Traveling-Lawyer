@@ -8,6 +8,7 @@ orphaned pending bit: authorized incident review is required. The guard must
 never be mistaken for durable event identity or cryptographic rollback proof.
 """
 from pathlib import Path
+from contextlib import contextmanager, closing
 from hashlib import sha256
 from secrets import token_hex
 import json
@@ -27,8 +28,8 @@ class LocalWriteFence:
         # or replacement. It is NOT independently trusted or rollback-proof.
         # Unanchored legacy sidecars must not be silently adopted.
         try:
-            with sqlite3.connect(str(self.database), timeout=5,
-                                 isolation_level=None) as main:
+            with closing(sqlite3.connect(str(self.database), timeout=5,
+                                         isolation_level=None)) as main, main:
                 main.execute('PRAGMA busy_timeout=5000')
                 main.execute('BEGIN IMMEDIATE')
                 main.execute("""CREATE TABLE IF NOT EXISTS local_write_fence_anchor (
@@ -88,7 +89,7 @@ class LocalWriteFence:
         try:
             if not self.path.is_file():
                 raise Denied('Missing local write fence; writes denied')
-            with sqlite3.connect(str(self.database), timeout=5) as main:
+            with closing(sqlite3.connect(str(self.database), timeout=5)) as main, main:
                 anchor=main.execute(
                     'SELECT marker FROM local_write_fence_anchor WHERE slot=1'
                 ).fetchone()
@@ -104,11 +105,21 @@ class LocalWriteFence:
         except (sqlite3.Error,OSError) as error:
             raise Denied('Cannot verify local write fence binding') from error
 
+    @contextmanager
     def _connection(self):
+        """Commit/rollback AND close each sidecar handle on every OS.
+
+        sqlite3.Connection.__exit__ manages a transaction but does not
+        close the connection. Windows keeps files locked until close().
+        """
         db = sqlite3.connect(str(self.path), timeout=5, isolation_level=None)
-        db.execute('PRAGMA busy_timeout=5000')
-        db.execute('PRAGMA synchronous=FULL')
-        return db
+        try:
+            db.execute('PRAGMA busy_timeout=5000')
+            db.execute('PRAGMA synchronous=FULL')
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def is_pending(self):
         self._verify_binding()
