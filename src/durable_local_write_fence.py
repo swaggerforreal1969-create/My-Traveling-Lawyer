@@ -8,6 +8,7 @@ orphaned pending bit: authorized incident review is required. The guard must
 never be mistaken for durable event identity or cryptographic rollback proof.
 """
 from pathlib import Path
+from contextlib import contextmanager
 from hashlib import sha256
 from secrets import token_hex
 import json
@@ -104,11 +105,21 @@ class LocalWriteFence:
         except (sqlite3.Error,OSError) as error:
             raise Denied('Cannot verify local write fence binding') from error
 
+    @contextmanager
     def _connection(self):
+        """Commit/rollback AND close each sidecar handle on every OS.
+
+        sqlite3.Connection.__exit__ manages a transaction but does not
+        close the connection. Windows keeps files locked until close().
+        """
         db = sqlite3.connect(str(self.path), timeout=5, isolation_level=None)
-        db.execute('PRAGMA busy_timeout=5000')
-        db.execute('PRAGMA synchronous=FULL')
-        return db
+        try:
+            db.execute('PRAGMA busy_timeout=5000')
+            db.execute('PRAGMA synchronous=FULL')
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def is_pending(self):
         self._verify_binding()
