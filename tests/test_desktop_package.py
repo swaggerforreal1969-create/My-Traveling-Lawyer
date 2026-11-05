@@ -150,6 +150,27 @@ class PortablePreviewAcceptance(unittest.TestCase):
         self.assertIn('FICTIONAL OFFLINE PILOT ONLY', result.stdout)
         self.assertIn('Tk module: available', result.stdout)
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows CMD acceptance requires Windows')
+    def test_real_windows_cmd_starts_verified_pilot_and_cancels(self):
+        root = self.extract()
+        result = subprocess.run(
+            ['cmd', '/c', 'launch-windows.cmd'], input='\\n\\n',
+            cwd=str(root), text=True, capture_output=True, timeout=35)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('FICTIONAL OFFLINE PILOT ONLY', result.stdout)
+        self.assertIn('Tk module: available', result.stdout)
+        self.assertFalse((root / 'new-fictional.sqlite3').exists())
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS .command acceptance requires macOS')
+    def test_real_macos_command_starts_verified_pilot_and_cancels(self):
+        root = self.extract()
+        result = subprocess.run(
+            ['/bin/sh', 'launch-macos.command'], input='\\n\\n',
+            cwd=str(root), text=True, capture_output=True, timeout=35)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('FICTIONAL OFFLINE PILOT ONLY', result.stdout)
+        self.assertIn('Tk module: available', result.stdout)
+
     def test_extracted_symlink_is_refused(self):
         if not hasattr(os,'symlink'):
             self.skipTest('Platform does not support symlinks')
