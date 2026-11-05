@@ -362,6 +362,56 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.assertEqual(cl.refresh().open_task_count,0)
         self.assertEqual(self.audit_count('task.complete'),1)
 
+    def test_uncertain_task_refresh_cannot_rearm_completion_or_review(self):
+        cl=self.select()
+        with patch.object(cl.operator.workflow,'open',
+                          side_effect=RuntimeError('synthetic lost readiness')):
+            result=cl.complete(0,True)
+        self.assertEqual(result.status,'committed_refresh_unresolved')
+        self.assertTrue(cl.has_recovery())
+        self.assertEqual(self.audit_count('task.complete'),1)
+        cl.refresh()  # observational; does not reinstate actionable IDs
+        self.assertEqual(cl.counts(),(0,0))
+        with self.assertRaises(Invalid):
+            cl.complete(0,True)
+        with self.assertRaises(Invalid):
+            cl.review(0,'corroborated_manually',
+                      'Fictional follow-up note is intentionally long',True)
+        with self.assertRaises(Invalid):
+            cl.list_matters()
+        observation=cl.inspect_uncertain_task_read_only()
+        self.assertEqual(observation.status,'observed_local_observed_completed')
+        self.assertTrue(cl.has_recovery())
+        self.assertEqual(self.audit_count('task.complete'),1)
+        self.assertEqual(self.audit_count('research.second_source_review'),0)
+
+    def test_postcommit_second_refresh_failure_preserves_write_fence(self):
+        cl=self.select()
+        with patch.object(cl,'refresh',side_effect=RuntimeError('lost GUI refresh')):
+            outcome=cl.complete(0,True)
+        self.assertEqual(outcome.status,'committed_refresh_unresolved')
+        self.assertTrue(cl.has_recovery())
+        cl.refresh()
+        self.assertEqual(cl.counts(),(0,0))
+        self.assertEqual(cl.inspect_uncertain_task_read_only().status,
+                         'observed_local_observed_completed')
+        self.assertTrue(cl.has_recovery())
+        with self.assertRaises(Invalid):
+            cl.complete(0,True)
+        self.assertEqual(self.audit_count('task.complete'),1)
+
+    def test_uncertain_task_read_only_recovery_denied_after_revocation(self):
+        cl=self.select()
+        with patch.object(cl.operator.workflow,'open',
+                          side_effect=RuntimeError('lost readiness')):
+            cl.complete(0,True)
+        self.core.revoke_token(self.reviewer)
+        with self.assertRaises(Denied):
+            cl.inspect_uncertain_task_read_only()
+        self.assertTrue(cl.has_recovery())
+        self.assertEqual(cl.counts(),(0,0))
+        self.assertEqual(self.audit_count('task.complete'),1)
+
     def test_cancelled_actions_and_invalid_selection_do_not_gain_auth(self):
         cl=self.select()
         self.assertEqual(cl.review(0,'forged','short',False).status,'cancelled')
