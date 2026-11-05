@@ -466,7 +466,7 @@ def launch_gui(core, token, *, run_mainloop=True):
     root.title('Private Attorney — Local Operator')
     root.geometry('760x650')
     root.minsize(580, 520)
-    outer = ttk.Frame(root, padding=14)
+    outer = ttk.Frame(root, padding=10)
     outer.pack(fill='both', expand=True)
     ttk.Label(outer, text='Private attorney operator',
               font=('TkDefaultFont', 18, 'bold')).pack(anchor='w')
@@ -499,7 +499,7 @@ def launch_gui(core, token, *, run_mainloop=True):
     # Privacy-safe observational panel. No case data, tokens or internal IDs.
     portfolio_panel = ttk.LabelFrame(outer, text='Authorized workload — read only')
     portfolio_panel.pack(fill='x', pady=(4, 2))
-    portfolio_text = tk.Text(portfolio_panel, height=3, wrap='word',
+    portfolio_text = tk.Text(portfolio_panel, height=2, wrap='word',
                              font=('TkDefaultFont', 11), takefocus=True)
     portfolio_text.pack(fill='x')
     portfolio_text.insert('1.0', 'Select Workload to reauthorize current counts.')
