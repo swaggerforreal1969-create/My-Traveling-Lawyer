@@ -64,6 +64,39 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.assertEqual(self.audit_count('task.complete'),1)
         self.assertTrue(self.core.verify_audit())
 
+    def test_graphical_completion_workload_reauthorizes_current_counts(self):
+        client=self.select()
+        previous=client.read_only_current_workload()
+        self.assertIn('Open user-entered tasks: 1',previous)
+        self.assertEqual(client.complete(0,True).status,'completed_and_refreshed')
+        refreshed=client.read_only_current_workload()
+        self.assertIn('Open user-entered tasks: 0',refreshed)
+        self.assertEqual(client.counts(),(0,1))
+        for private in ('SECRET CLIENT CASE','SECRET PRIVATE TASK',
+                        'SECRET RESEARCH TITLE','SECRET EXCERPT',
+                        self.mid,self.eid,self.reviewer):
+            self.assertNotIn(private,refreshed)
+        self.assertEqual(self.audit_count('task.complete'),1)
+
+    def test_graphical_completion_workload_denied_after_revocation(self):
+        client=self.select()
+        self.assertEqual(client.complete(0,True).status,'completed_and_refreshed')
+        self.core.revoke_token(self.reviewer)
+        with self.assertRaises(Denied):
+            client.read_only_current_workload()
+        self.assertEqual(self.audit_count('task.complete'),1)
+
+    def test_graphical_workload_read_failure_does_not_repeat_completion(self):
+        client=self.select()
+        self.assertEqual(client.complete(0,True).status,'completed_and_refreshed')
+        with patch.object(client.operator,'portfolio_summary',
+                          side_effect=RuntimeError('fictional read loss')):
+            with self.assertRaises(RuntimeError):
+                client.read_only_current_workload()
+        self.assertEqual(self.audit_count('task.complete'),1)
+        self.assertEqual(client.read_only_current_workload().count(
+            'Open user-entered tasks: 0'),1)
+
     def test_cross_firm_viewer_and_revocation_denied(self):
         self.assertEqual(LocalOperatorController(self.core,self.outside).list_matters(),0)
         reader=self.select(LocalOperatorController(self.core,self.viewer))

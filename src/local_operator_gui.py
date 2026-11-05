@@ -119,6 +119,14 @@ class LocalOperatorController:
             self._matters = ()
         return self.operator.portfolio_summary(self._token)
 
+    def read_only_current_workload(self):
+        """Fresh authorized private workload without discarding current matter.
+
+        This observational call never confers write authority; it can be used
+        after a confirmed task completion to update the graphical summary.
+        """
+        return self.operator.portfolio_summary(self._token)
+
     def has_recovery(self):
         return (self._recovery is not None or (
             self._durable_fence is not None and self._matter_id is not None
@@ -463,6 +471,13 @@ def launch_gui(core, token, *, run_mainloop=True):
             controller._matter_id = None
         update_controls()
 
+    def display_private_workload(summary):
+        # No raw client text, case identifiers, tokens or notes are supplied.
+        portfolio_text.configure(state='normal')
+        portfolio_text.delete('1.0', 'end')
+        portfolio_text.insert('1.0', summary)
+        portfolio_text.configure(state='disabled')
+
     def show_portfolio():
         # Never leave stale aggregate counts visible after failed authorization.
         clear_all_visible_work()
@@ -706,7 +721,25 @@ def launch_gui(core, token, *, run_mainloop=True):
             try:
                 confirmation_still_current('task', position, original_matter, identity)
                 result=controller.complete(position, True)
-                if result.status != 'committed_refresh_unresolved':
+                if result.status == 'completed_and_refreshed':
+                    # Refresh actionable rows, then separately reauthorize the
+                    # GUI's read-only portfolio. Do not turn a committed task
+                    # into an apparent failed write or replay on read failure.
+                    display_counts()
+                    try:
+                        summary=controller.read_only_current_workload()
+                        display_private_workload(summary)
+                    except Exception:
+                        clear_all_visible_work()
+                        status.set('Task may be committed; workload refresh unresolved. '
+                                   'Do NOT repeat. Reopen read-only.')
+                        messagebox.showwarning(
+                            'Workload refresh unresolved',
+                            'Task completion was acknowledged, but the private '
+                            'workload could not be refreshed. Do NOT repeat.',
+                            parent=root)
+                        return
+                elif result.status != 'committed_refresh_unresolved':
                     display_counts()
                 else:
                     task_list.delete(0,'end')
