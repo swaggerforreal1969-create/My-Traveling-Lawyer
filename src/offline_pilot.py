@@ -106,10 +106,16 @@ def open_fictional_pilot(database: Path, token: str, *, run_mainloop=True):
         from .private_attorney_operator import PrivateAttorneyOperator
         PrivateAttorneyOperator(core).matters(token)
         from .local_operator_gui import launch_gui
-        return launch_gui(core, token, run_mainloop=run_mainloop)
+        root = launch_gui(core, token, run_mainloop=run_mainloop)
+        if not run_mainloop:
+            # Explicit lifetime ownership for headless/native acceptance.
+            # Callers must destroy root and close core.
+            return root, core
+        return None
+    except Exception:
+        core.close()
+        raise
     finally:
-        # Native Tk runs its own loop. Testing callers using run_mainloop=False
-        # must own the returned root and use a separate test-controlled core.
         if run_mainloop:
             core.close()
 
