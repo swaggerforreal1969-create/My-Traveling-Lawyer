@@ -79,6 +79,52 @@ class DurableLocalWriteFenceTests(unittest.TestCase):
         for secret in (self.editor,self.author,self.mid,task[0]):
             self.assertNotIn(secret.encode(),data)
 
+    def test_task_second_display_failure_retains_durable_fence_across_restart(self):
+        task=self.client._tasks[0]
+        with patch.object(self.client,'refresh',
+                          side_effect=RuntimeError('postcommit GUI read failed')):
+            outcome=self.client.complete(0,True)
+        self.assertEqual(outcome.status,'committed_refresh_unresolved')
+        self.assertTrue(self.fence.is_pending())
+        self.assertEqual(self.fence.pending_kind(),'task')
+        self.assertEqual(self.count('task.complete'),1)
+        reopened=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        reopened.list_matters()
+        reopened.select(0)
+        self.assertEqual(reopened.counts(),(0,0))
+        self.assertEqual(reopened.reconcile_pending_task_after_restart().status,
+                         'observed_local_commit')
+        self.assertTrue(self.fence.is_pending())
+        with self.assertRaises(Denied):
+            reopened.complete(0,True)
+        self.assertEqual(self.count('task.complete'),1)
+
+    def test_task_final_clearance_failure_never_replays_or_rearms(self):
+        with patch.object(self.fence,'finish_confirmed',
+                          side_effect=Denied('simulated CAS rejection')):
+            result=self.client.complete(0,True)
+        self.assertEqual(result.status,'committed_refresh_unresolved')
+        self.assertTrue(self.fence.is_pending())
+        self.assertTrue(self.client.has_recovery())
+        self.client.refresh()
+        self.assertEqual(self.client.counts(),(0,0))
+        with self.assertRaises(Invalid):
+            self.client.complete(0,True)
+        self.assertEqual(self.count('task.complete'),1)
+
+    def test_task_successful_display_clears_exact_reservation(self):
+        self.assertFalse(self.fence.is_pending())
+        result=self.client.complete(0,True)
+        self.assertEqual(result.status,'completed_and_refreshed')
+        self.assertFalse(self.fence.is_pending())
+        self.assertEqual(self.count('task.complete'),1)
+        restarted=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        restarted.list_matters()
+        restarted.select(0)
+        self.assertEqual(restarted.counts()[0],0)
+
     def test_task_reservation_prewrite_crash_readback_retains_fence(self):
         task=self.client._tasks[0]
         actor=self.core._identity(self.editor)
