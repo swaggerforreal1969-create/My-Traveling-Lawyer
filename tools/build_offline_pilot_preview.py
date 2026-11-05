@@ -103,6 +103,34 @@ def collect() -> dict[str, bytes]:
     return result
 
 
+WINDOWS_START = r"""@echo off
+setlocal
+cd /d "%~dp0"
+echo FICTIONAL OFFLINE PILOT ONLY - NEVER USE REAL CLIENT DATA
+where py >nul 2>nul
+if %errorlevel%==0 (
+    py -3 start_pilot.py
+) else (
+    python start_pilot.py
+)
+set "pilot_exit=%errorlevel%"
+echo.
+echo Pilot closed. Press any key to close this window.
+pause >nul
+exit /b %pilot_exit%
+"""
+
+POSIX_START = """#!/bin/sh
+# Fictional-only local pilot. No downloads, network services or privileges.
+cd -- "$(dirname -- "$0")" || exit 2
+printf '%s\\n' 'FICTIONAL OFFLINE PILOT ONLY - NEVER USE REAL CLIENT DATA'
+python3 start_pilot.py
+result=$?
+printf '%s\\n' 'Pilot closed. Press Enter to close this window.'
+IFS= read -r _unused || true
+exit "$result"
+"""
+
 def build(output: Path) -> dict:
     output = Path(output)
     if output.exists() or output.is_symlink():
@@ -115,7 +143,10 @@ def build(output: Path) -> dict:
                 'sha256': {k: sha256(v).hexdigest() for k,v in sorted(source.items())},
                 'independent_security_approval': False,
                 'production_use': False}
-    assets = {'run_pilot.py': LAUNCHER.encode('utf-8'),
+    assets = {'launch-windows.cmd': WINDOWS_START.encode('utf-8'),
+              'launch-macos.command': POSIX_START.encode('utf-8'),
+              'launch-linux.sh': POSIX_START.encode('utf-8'),
+              'run_pilot.py': LAUNCHER.encode('utf-8'),
               'start_pilot.py': (ROOT / 'tools' / 'portable_desktop_start.py').read_bytes(),
               'MANIFEST.json': (json.dumps(manifest,sort_keys=True,indent=2)+'\n').encode(),
               'README.txt': (
@@ -124,6 +155,9 @@ def build(output: Path) -> dict:
                  'Extract the ZIP locally, do not run it within the archive.\n'
                  'Check integrity: python run_pilot.py --verify\n'
                  'Interactive start: python start_pilot.py\n'
+                 'Windows: double-click launch-windows.cmd (requires Python and Tk).\n'
+                 'macOS: open launch-macos.command (requires Python 3.11+ and Tk).\n'
+                 'Linux: sh launch-linux.sh (requires Python 3.11+ and Tk).\n'
                  'Setup: python run_pilot.py init --database new-fictional.sqlite3\n'
                  'Open: python run_pilot.py open --database new-fictional.sqlite3\n'
                  'Token is entered hidden; keep it out of logs and chats.\n'
@@ -139,7 +173,7 @@ def build(output: Path) -> dict:
             for name,data in sorted(assets.items()):
                 info=ZipInfo(ROOT_NAME+'/'+name, date_time=(2020,1,1,0,0,0))
                 info.compress_type=ZIP_DEFLATED
-                info.external_attr=0o644 << 16
+                info.external_attr=(0o755 if name.endswith(('.command', '.sh')) else 0o644) << 16
                 archive.writestr(info,data)
     return {'archive_sha256': sha256(output.read_bytes()).hexdigest(),
             'source_count': len(source), 'archive': str(output)}

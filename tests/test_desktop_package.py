@@ -121,6 +121,35 @@ class PortablePreviewAcceptance(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(existing.read_bytes(), b'KEEP-SYNTHETIC-DATA')
 
+    def test_platform_launchers_are_packaged_with_safe_local_entrypoint(self):
+        root = self.extract()
+        for filename in ('launch-windows.cmd', 'launch-macos.command', 'launch-linux.sh'):
+            script = (root / filename).read_text(encoding='utf-8')
+            self.assertIn('start_pilot.py', script)
+            self.assertNotIn('curl ', script)
+            self.assertNotIn('wget ', script)
+            self.assertNotIn('pip install', script)
+            self.assertNotIn('http://', script)
+            self.assertNotIn('https://', script)
+        with ZipFile(self.archive) as z:
+            for filename in ('launch-macos.command', 'launch-linux.sh'):
+                info = z.getinfo('mtl-fictional-preview/' + filename)
+                self.assertEqual((info.external_attr >> 16) & 0o111, 0o111)
+        self.assertTrue((root/'launch-windows.cmd').read_text().startswith('@echo off'))
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX shell acceptance runs only on POSIX')
+    def test_posix_launcher_executes_real_verified_pilot_and_clean_cancel(self):
+        import shutil
+        if not shutil.which('python3'):
+            self.skipTest('python3 not present on shell PATH')
+        root = self.extract()
+        result = subprocess.run(
+            ['sh', 'launch-linux.sh'], input='\n\n', cwd=str(root),
+            text=True, capture_output=True, timeout=35)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('FICTIONAL OFFLINE PILOT ONLY', result.stdout)
+        self.assertIn('Tk module: available', result.stdout)
+
     def test_extracted_symlink_is_refused(self):
         if not hasattr(os,'symlink'):
             self.skipTest('Platform does not support symlinks')
