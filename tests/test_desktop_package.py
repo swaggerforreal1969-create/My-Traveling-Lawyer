@@ -90,6 +90,37 @@ class PortablePreviewAcceptance(unittest.TestCase):
         self.assertEqual(first['archive_sha256'],second['archive_sha256'])
         self.assertGreater(first['source_count'],5)
 
+    def test_portable_human_launcher_is_packaged_and_checks_integrity(self):
+        root = self.extract()
+        helper = root / 'start_pilot.py'
+        self.assertTrue(helper.is_file())
+        result = subprocess.run(
+            [sys.executable, str(helper), '--check'],
+            cwd=str(root), text=True, capture_output=True, timeout=35)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Tk module: available', result.stdout)
+        before = self.invoke(root, '--verify')
+        self.assertEqual(before.returncode, 0)
+        # A damaged published module must block the human launcher too.
+        module = root / 'src' / 'offline_pilot.py'
+        module.write_bytes(module.read_bytes() + b'\\n# synthetic damage\\n')
+        denied = subprocess.run(
+            [sys.executable, str(helper), '--check'],
+            cwd=str(root), text=True, capture_output=True, timeout=35)
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn('DENIED: package verification failed', denied.stderr)
+
+    def test_portable_human_launcher_never_overwrites_existing_database(self):
+        root = self.extract()
+        existing = root / 'already.sqlite3'
+        existing.write_bytes(b'KEEP-SYNTHETIC-DATA')
+        result = subprocess.run(
+            [sys.executable, 'start_pilot.py'],
+            input='1\\n' + str(existing) + '\\n',
+            cwd=str(root), text=True, capture_output=True, timeout=35)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(existing.read_bytes(), b'KEEP-SYNTHETIC-DATA')
+
     def test_extracted_symlink_is_refused(self):
         if not hasattr(os,'symlink'):
             self.skipTest('Platform does not support symlinks')
