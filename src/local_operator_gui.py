@@ -37,8 +37,12 @@ class LocalOperatorController:
         self._tasks = ()
         self._reviews = ()
         self._recovery = None
+        self._uncertain_task = None  # session-only task identity, never UI output
 
     def _assert_no_uncertain_review(self):
+        if self._uncertain_task is not None:
+            self._tasks, self._reviews = (), ()
+            raise Invalid('Uncertain task completion; no new writes in this session')
         if self._durable_fence is not None and self._durable_fence.is_pending():
             self._tasks, self._reviews = (), ()
             raise Denied('A write is unresolved. No new write permitted')
@@ -50,8 +54,8 @@ class LocalOperatorController:
         # An in-memory uncertain review retains its exact recovery identity.
         # A different, restarted window may select matters READ-ONLY while
         # the durable global write fence remains pending.
-        if self._recovery is not None:
-            raise Invalid('Reconcile the current review before switching matters')
+        if self._recovery is not None or self._uncertain_task is not None:
+            raise Invalid('Uncertain write; read-only incident review required')
         self._matter_id = None
         self._tasks = ()
         self._reviews = ()
@@ -91,7 +95,7 @@ class LocalOperatorController:
             queue = self.operator.reviewer_inbox(self._token, mid)
             reviews = tuple((item['evidence_id'], item['observation_id'])
                             for item in queue['items'])
-        if (self._recovery is not None or
+        if (self._recovery is not None or self._uncertain_task is not None or
                 (self._durable_fence is not None and self._durable_fence.is_pending())):
             # Refresh is allowed for observational purposes only. Pending
             # uncertainty must never repopulate actionable row selections.
@@ -114,7 +118,7 @@ class LocalOperatorController:
         Preserve unresolved review identity for separate human recovery.
         """
         self._tasks, self._reviews = (), ()
-        if self._recovery is None:
+        if self._recovery is None and self._uncertain_task is None:
             self._matter_id = None
             self._matters = ()
         return self.operator.portfolio_summary(self._token)
@@ -128,7 +132,7 @@ class LocalOperatorController:
         return self.operator.portfolio_summary(self._token)
 
     def has_recovery(self):
-        return (self._recovery is not None or (
+        return (self._recovery is not None or self._uncertain_task is not None or (
             self._durable_fence is not None and self._matter_id is not None
             and self._durable_fence.is_pending()))
 
@@ -214,6 +218,7 @@ class LocalOperatorController:
         if result.status not in allowed:
             raise Invalid('Unrecognized completion state')
         if result.status == 'committed_refresh_unresolved':
+            self._uncertain_task = (self._matter_id, task_id, version)
             self._tasks, self._reviews = (), ()
             return ActionFeedback(result.status, allowed[result.status])
         if self._durable_fence is not None:
@@ -225,12 +230,30 @@ class LocalOperatorController:
         except Exception:
             self._tasks, self._reviews = (), ()
             if result.status == 'completed_and_refreshed':
+                self._uncertain_task = (self._matter_id, task_id, version)
                 return ActionFeedback(
                     'committed_refresh_unresolved',
                     'Task committed; display refresh unresolved. Do NOT repeat.')
             return ActionFeedback('unresolved_no_write',
                                   'Read-only state refresh unresolved; no new write.')
         return ActionFeedback(result.status, allowed[result.status])
+
+    def inspect_uncertain_task_read_only(self):
+        """Observe an uncertain local task, without clearing the session fence.
+
+        Only a human-initiated read; local audit is not independent custody.
+        No completion replay or renewed write authority is ever issued here.
+        """
+        if self._uncertain_task is None:
+            raise Invalid('No uncertain task in this session')
+        self._tasks, self._reviews = (), ()
+        matter_id, task_id, version = self._uncertain_task
+        result = self.operator.reconcile_task(
+            self._token, matter_id, task_id, version)
+        return ActionFeedback(
+            'observed_local_' + result.status,
+            'Local task state: ' + result.status +
+            '. Session remains write-fenced. Do NOT repeat the write.')
 
     def reconcile_pending_task_after_restart(self):
         """Actor-authorized, strictly observational local task readback.
@@ -756,7 +779,9 @@ def launch_gui(core, token, *, run_mainloop=True):
 
     def recover():
         try:
-            if (controller._durable_fence is not None and
+            if controller._uncertain_task is not None:
+                result=controller.inspect_uncertain_task_read_only()
+            elif (controller._durable_fence is not None and
                     controller._durable_fence.is_pending() and
                     controller._durable_fence.pending_kind()=='task'):
                 result=controller.reconcile_pending_task_after_restart()
