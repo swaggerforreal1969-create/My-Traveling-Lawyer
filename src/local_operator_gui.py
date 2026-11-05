@@ -609,11 +609,30 @@ def launch_gui(core, token, *, run_mainloop=True):
             status.set('Private work hidden. Reauthenticate before continuing.')
         update_controls()
 
+    # Tk's after callbacks outlive individual destroyed windows unless
+    # explicitly cancelled. Keep one owned timer per root and cancel it on
+    # destruction, avoiding stale Tcl callback invocations on Windows.
+    privacy_timer = {'id': None, 'closed': False}
+
     def privacy_tick():
-        if not root.winfo_exists():
+        privacy_timer['id'] = None
+        if privacy_timer['closed'] or not root.winfo_exists():
             return
         privacy_check()
-        root.after(2000, privacy_tick)
+        if not privacy_timer['closed'] and root.winfo_exists():
+            privacy_timer['id'] = root.after(2000, privacy_tick)
+
+    def privacy_window_destroyed(event):
+        if event.widget is not root:
+            return
+        privacy_timer['closed'] = True
+        pending = privacy_timer['id']
+        privacy_timer['id'] = None
+        if pending is not None:
+            try:
+                root.after_cancel(pending)
+            except tk.TclError:
+                pass
 
     def privacy_window_hidden(event):
         # Toplevel unmapping/minimizing invalidates the visible session.
@@ -626,7 +645,8 @@ def launch_gui(core, token, *, run_mainloop=True):
     # on wall-clock timers. Every invocation performs real backend checking.
     root.privacy_check = privacy_check
     root.bind('<Unmap>', privacy_window_hidden, add='+')
-    root.after(2000, privacy_tick)
+    root.bind('<Destroy>', privacy_window_destroyed, add='+')
+    privacy_timer['id'] = root.after(2000, privacy_tick)
 
     def refresh_lists():
         # Rebuilding the matter index invalidates the review-note context.
@@ -733,7 +753,9 @@ def launch_gui(core, token, *, run_mainloop=True):
             # confirmation. The backend retains its independent validation.
             if not 15 <= len(human_note.strip()) <= 1200:
                 status.set('Review note must contain 15–1200 characters. No write performed.')
-                note.focus_set()
+                # An explicit invalid-note button action must focus this field
+                # even when the native runner currently has no focused window.
+                note.focus_force()
                 return
             position = review_list.curselection()[0]
             original_matter = controller._matter_id
