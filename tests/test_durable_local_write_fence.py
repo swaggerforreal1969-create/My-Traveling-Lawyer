@@ -53,6 +53,50 @@ class DurableLocalWriteFenceTests(unittest.TestCase):
         return self.core.db.execute(
             'SELECT count(*) FROM audit_chain WHERE action=?',(action,)).fetchone()[0]
 
+    def test_review_second_display_failure_keeps_durable_fence_after_restart(self):
+        with patch.object(self.client,'refresh',
+                          side_effect=RuntimeError('lost postcommit review display')):
+            result=self.client.review(
+                0,'corroborated_manually',
+                'Human independently verified imaginary research',True)
+        self.assertEqual(result.status,'committed_refresh_unresolved')
+        self.assertEqual(self.count('research.second_source_review'),1)
+        self.assertTrue(self.fence.is_pending())
+        self.assertEqual(self.fence.pending_kind(),'review')
+        restarted=LocalOperatorController(
+            self.core,self.editor,durable_fence=LocalWriteFence(self.path))
+        restarted.list_matters()
+        restarted.select(0)
+        self.assertEqual(restarted.counts(),(0,0))
+        self.assertEqual(restarted.reconcile_pending_review_after_restart().status,
+                         'observed_local_commit')
+        self.assertFalse(self.fence.is_pending())
+        self.assertEqual(self.count('research.second_source_review'),1)
+
+    def test_review_final_cas_rejection_never_rearms_tasks(self):
+        with patch.object(self.fence,'finish_confirmed',
+                          side_effect=Denied('synthetic CAS denial')):
+            result=self.client.review(
+                0,'corroborated_manually',
+                'Human independently checked fictional evidence',True)
+        self.assertEqual(result.status,'committed_refresh_unresolved')
+        self.assertTrue(self.fence.is_pending())
+        self.assertTrue(self.client.has_recovery())
+        self.client.refresh()
+        self.assertEqual(self.client.counts(),(0,0))
+        with self.assertRaises(Denied):
+            self.client.complete(0,True)
+        self.assertEqual(self.count('research.second_source_review'),1)
+        self.assertEqual(self.count('task.complete'),0)
+
+    def test_review_successful_final_display_clears_reservation(self):
+        result=self.client.review(
+            0,'corroborated_manually',
+            'Independent human reviewed fictitious source',True)
+        self.assertEqual(result.status,'review_committed')
+        self.assertFalse(self.fence.is_pending())
+        self.assertEqual(self.count('research.second_source_review'),1)
+
     def test_task_reservation_readback_after_local_commit_retains_fence(self):
         from src.task_reconciliation import reconcile_task
         task=self.client._tasks[0]

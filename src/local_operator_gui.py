@@ -169,21 +169,30 @@ class LocalOperatorController:
         except (Denied, Invalid, Stale, EvidenceInvalid):
             self._tasks, self._reviews = (), ()
             raise
-        if self._durable_fence is not None:
-            self._durable_fence.finish_confirmed(
-                expected_reservation=self._reservation)
-            self._reservation = None
         try:
             self.refresh()
         except Exception:
-            # The delegated operation committed. A later presentation read
-            # must not turn success into an apparent failed write. Preserve the
-            # exact record for one optional actor-authorized read-only check.
+            # The local second-human review was committed, but a separate
+            # authorized display read failed. Preserve BOTH local recovery
+            # identity and durable pending reservation across restart.
             self._recovery = ('source.second_review', committed.record_id)
             self._tasks, self._reviews = (), ()
             return ActionFeedback(
                 'committed_refresh_unresolved',
                 'Review committed, display refresh unresolved. Do NOT repeat.')
+        # Clear only the exact reservation AFTER the final authorized read;
+        # failed CAS is an incident, never implicit permission to write again.
+        if self._durable_fence is not None:
+            try:
+                self._durable_fence.finish_confirmed(
+                    expected_reservation=self._reservation)
+            except Exception:
+                self._recovery = ('source.second_review', committed.record_id)
+                self._tasks, self._reviews = (), ()
+                return ActionFeedback(
+                    'committed_refresh_unresolved',
+                    'Review committed; local write fence unresolved. Do NOT repeat.')
+            self._reservation = None
         return ActionFeedback('review_committed', 'Review recorded. Readiness refreshed.')
 
     def complete(self, position, confirmed):
