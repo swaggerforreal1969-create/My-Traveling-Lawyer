@@ -17,8 +17,8 @@ ENTRY = 'offline_pilot'
 ROOT_NAME = 'mtl-fictional-preview'
 # These are not allowed into the fictional offline bundle.
 FORBIDDEN = {
-    'server', 'legacy_server_DISABLED', 'readiness_loopback_http',
-    'readiness_json_http', 'mobile_preview_gateway',
+    # mobile_preview_gateway is an in-memory, script-free renderer; it has\n    # no listener or network transport and is part of the real local path.\n    'server', 'legacy_server_DISABLED', 'readiness_loopback_http',
+    'readiness_json_http',
     'ai_outbound_boundary', 'pinned_https_custody_adapter',
     'v2_custody_transport',
 }
