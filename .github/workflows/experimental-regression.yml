@@ -78,6 +78,10 @@ jobs:
         run: |
           python -m py_compile src/local_operator_cli.py tests/test_local_operator_cli.py
           python -m unittest discover -s tests -p 'test_local_operator_cli.py' -q
+      - name: Offline fictional attorney pilot lifecycle and restart acceptance
+        run: |
+          python -m py_compile src/offline_pilot.py tests/test_offline_pilot.py
+          python -m unittest discover -s tests -p 'test_offline_pilot.py' -q
       - name: Local graphical operator controller acceptance (headless)
         run: |
           python -m py_compile src/local_operator_gui.py tests/test_local_operator_gui.py
