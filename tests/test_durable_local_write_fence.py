@@ -404,6 +404,17 @@ class DurableLocalWriteFenceTests(unittest.TestCase):
             self.client.complete(0,True)
         self.assertEqual(self.count('task.complete'),0)
 
+    def test_closed_sidecar_handle_allows_windows_file_rename_after_read(self):
+        # A SQLite connection context alone does not close its file handle.
+        # This OS-level test catches leaked reader handles on Windows.
+        self.assertFalse(self.fence.is_pending())
+        path=self.fence.path
+        temporary=path.with_name(path.name+'.rename-probe')
+        path.replace(temporary)
+        temporary.replace(path)
+        self.assertFalse(self.fence.is_pending())
+        self.assertEqual(self.count('task.complete'),0)
+
     def test_correct_existing_fence_reopens_with_same_binding(self):
         another=LocalWriteFence(self.path)
         self.assertFalse(another.is_pending())
