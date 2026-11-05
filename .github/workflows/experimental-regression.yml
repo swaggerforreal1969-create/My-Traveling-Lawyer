@@ -82,6 +82,10 @@ jobs:
         run: |
           python -m py_compile src/offline_pilot.py tests/test_offline_pilot.py
           python -m unittest discover -s tests -p 'test_offline_pilot.py' -q
+      - name: Portable fictional desktop package and extraction acceptance
+        run: |
+          python -m py_compile tools/build_offline_pilot_preview.py tests/test_desktop_package.py
+          python -m unittest discover -s tests -p 'test_desktop_package.py' -q
       - name: Local graphical operator controller acceptance (headless)
         run: |
           python -m py_compile src/local_operator_gui.py tests/test_local_operator_gui.py
@@ -295,3 +299,33 @@ jobs:
           python -m unittest discover -s tests -p 'test_v2_signed_authority_policy.py' -v
       - name: Verify standalone Ed25519 pin compatibility
         run: python -m unittest discover -s tests -p 'test_v2_asymmetric_trust.py' -v
+
+  offline-preview-platforms:
+    name: Experimental pilot preview on ${{ matrix.os }} (not release)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Real portable extraction, fictional database init and security checks
+        run: python -m unittest discover -s tests -p test_desktop_package.py -v
+      - name: Real local pilot authorization, workflow and restart checks
+        run: python -m unittest discover -s tests -p test_offline_pilot.py -v
+      - name: Build reproducible experimental preview archive
+        run: python tools/build_offline_pilot_preview.py --output mtl-fictional-preview.zip
+      - name: Retain private experimental ZIP for inspection (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtl-fictional-offline-preview-NOT-FOR-CLIENTS
+          path: mtl-fictional-preview.zip
+          if-no-files-found: error
+          retention-days: 3
