@@ -193,6 +193,17 @@ class LocalOperatorController:
                     'committed_refresh_unresolved',
                     'Review committed; local write fence unresolved. Do NOT repeat.')
             self._reservation = None
+            # The pre-clearance read is deliberately non-actionable while the
+            # durable fence is pending. Reauthorize the selectable rows AFTER
+            # exact clearance; never replay the previously committed review.
+            try:
+                self.refresh()
+            except Exception:
+                self._recovery = ('source.second_review', committed.record_id)
+                self._tasks, self._reviews = (), ()
+                return ActionFeedback(
+                    'committed_refresh_unresolved',
+                    'Review committed; final display unavailable. Do NOT repeat.')
         return ActionFeedback('review_committed', 'Review recorded. Readiness refreshed.')
 
     def complete(self, position, confirmed):
@@ -257,6 +268,20 @@ class LocalOperatorController:
                     'committed_refresh_unresolved',
                     'Local fence clearance unresolved. Do NOT repeat the write.')
             self._reservation = None
+            # A fenced verification read cannot populate selectable actions.
+            # Once exact clearance succeeds, independently reauthorize again.
+            try:
+                self.refresh()
+            except Exception:
+                self._uncertain_task = (self._matter_id, task_id, version)
+                self._tasks, self._reviews = (), ()
+                if result.status == 'completed_and_refreshed':
+                    return ActionFeedback(
+                        'committed_refresh_unresolved',
+                        'Task committed; final display unavailable. Do NOT repeat.')
+                return ActionFeedback(
+                    'unresolved_no_write',
+                    'Read-only refresh unavailable. No further write permitted.')
         return ActionFeedback(result.status, allowed[result.status])
 
     def inspect_uncertain_task_read_only(self):
