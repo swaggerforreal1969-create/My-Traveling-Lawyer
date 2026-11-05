@@ -143,7 +143,7 @@ def build(output: Path) -> dict:
                 'sha256': {k: sha256(v).hexdigest() for k,v in sorted(source.items())},
                 'independent_security_approval': False,
                 'production_use': False}
-        assets = {'launch-windows.cmd': WINDOWS_START.encode('utf-8'),
+    assets = {'launch-windows.cmd': WINDOWS_START.encode('utf-8'),
               'launch-macos.command': POSIX_START.encode('utf-8'),
               'launch-linux.sh': POSIX_START.encode('utf-8'),
               'run_pilot.py': LAUNCHER.encode('utf-8'),
