@@ -393,6 +393,39 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
             "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
         ).fetchone()[0],1)
 
+    def test_native_uncertain_completion_stays_write_fenced_after_refresh(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        controller=self.root.controller if hasattr(self.root,'controller') else None
+        # The GUI uses actual SecureCore plus LocalOperatorController; inject
+        # only the post-commit presentation failure.
+        original=LocalOperatorController.refresh
+        times=[0]
+        def fail_once(instance):
+            times[0]+=1
+            if times[0] == 2:
+                raise RuntimeError('synthetic postcommit GUI refresh loss')
+            return original(instance)
+        with (patch.object(messagebox,'askyesno',return_value=True),
+              patch.object(messagebox,'showwarning'),
+              patch.object(LocalOperatorController,'refresh',fail_once)):
+            self.buttons['Complete task'].invoke()
+        self.root.update()
+        self.assertEqual(self.listboxes[2].size(),0)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+        self.buttons['Refresh'].invoke() if str(self.buttons['Refresh'].cget('state')) != 'disabled' else None
+        self.root.update()
+        self.assertEqual(self.listboxes[2].size(),0)
+        self.assertEqual(str(self.buttons['Complete task'].cget('state')),'disabled')
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+
     def test_real_confirm_dialog_rejection_has_zero_writes(self):
         self.open()
         self.select_matter()
