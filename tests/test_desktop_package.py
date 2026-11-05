@@ -144,7 +144,7 @@ class PortablePreviewAcceptance(unittest.TestCase):
             self.skipTest('python3 not present on shell PATH')
         root = self.extract()
         result = subprocess.run(
-            ['sh', 'launch-linux.sh'], input='\\n\\n', cwd=str(root),
+            ['sh', 'launch-linux.sh'], input='\n\n', cwd=str(root),
             text=True, capture_output=True, timeout=35)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('FICTIONAL OFFLINE PILOT ONLY', result.stdout)
