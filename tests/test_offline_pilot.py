@@ -29,7 +29,7 @@ class OfflinePilotLifecycleTests(unittest.TestCase):
         credentials = self.initialize()
         self.assertTrue(self.path.is_file())
         self.assertTrue(LocalWriteFence(self.path).path.is_file())
-        with SecureCore(self.path) if False else _closing_core(self.path) as core:
+        with _closing_core(self.path) as core:
             editor = LocalOperatorController(
                 core, credentials['editor_token'],
                 durable_fence=LocalWriteFence(self.path))
