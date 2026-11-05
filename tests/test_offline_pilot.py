@@ -35,7 +35,8 @@ class OfflinePilotLifecycleTests(unittest.TestCase):
                 durable_fence=LocalWriteFence(self.path))
             self.assertEqual(editor.list_matters(), 1)
             editor.select(0)
-            self.assertEqual(editor.counts(), (1, 1))
+            # An evidence author cannot serve as their own second-human reviewer.
+            self.assertEqual(editor.counts(), (1, 0))
             reviewer = LocalOperatorController(
                 core, credentials['reviewer_token'],
                 durable_fence=LocalWriteFence(self.path))
