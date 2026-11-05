@@ -426,6 +426,43 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
             "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
         ).fetchone()[0],1)
 
+    def test_native_end_to_end_review_completion_private_workload(self):
+        self.open()
+        self.select_matter()
+        self.assertEqual(self.listboxes[1].size(),1)
+        self.assertEqual(self.listboxes[2].size(),1)
+        self.listboxes[1].selection_set(0)
+        self.listboxes[1].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        self.texts[0].insert('1.0',
+            'Independent human reviewed fictional source and observation')
+        with patch.object(messagebox,'askyesno',return_value=True) as consent:
+            self.buttons['Record review'].invoke()
+        self.root.update()
+        self.assertEqual(consent.call_count,1)
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0],1)
+        self.assertEqual(self.listboxes[1].size(),0)
+        self.assertEqual(self.listboxes[2].size(),1)
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        with patch.object(messagebox,'askyesno',return_value=True) as consent:
+            self.buttons['Complete task'].invoke()
+        self.root.update()
+        self.assertEqual(consent.call_count,1)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+        self.assertEqual(self.listboxes[2].size(),0)
+        summary=self.texts[1].get('1.0','end-1c')
+        self.assertIn('Open user-entered tasks: 0',summary)
+        self.assertIn('Second-human reviews waiting: 0',summary)
+        for secret in ('PRIVATE FICTITIOUS CASE','SECRET PRIVATE TASK',
+                       'SECRET SOURCE','SECRET EXCERPT',self.mid,self.reviewer):
+            self.assertNotIn(secret,summary)
+        self.assertTrue(self.core.verify_audit())
+
     def test_real_confirm_dialog_rejection_has_zero_writes(self):
         self.open()
         self.select_matter()
