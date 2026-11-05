@@ -221,21 +221,33 @@ class LocalOperatorController:
             self._uncertain_task = (self._matter_id, task_id, version)
             self._tasks, self._reviews = (), ()
             return ActionFeedback(result.status, allowed[result.status])
-        if self._durable_fence is not None:
-            self._durable_fence.finish_confirmed(
-                expected_reservation=self._reservation)
-            self._reservation = None
         try:
             self.refresh()
         except Exception:
             self._tasks, self._reviews = (), ()
+            # Keep the durable sidecar pending across a crash or restart.
+            # The write outcome and presentation are not fully reconciled.
+            self._uncertain_task = (self._matter_id, task_id, version)
             if result.status == 'completed_and_refreshed':
-                self._uncertain_task = (self._matter_id, task_id, version)
                 return ActionFeedback(
                     'committed_refresh_unresolved',
                     'Task committed; display refresh unresolved. Do NOT repeat.')
             return ActionFeedback('unresolved_no_write',
                                   'Read-only state refresh unresolved; no new write.')
+        # Only clear the exact prewrite reservation after successful delegated
+        # outcome AND final reauthorized display read. A failed CAS must leave
+        # actions unavailable; neither retries nor assumptions are permitted.
+        if self._durable_fence is not None:
+            try:
+                self._durable_fence.finish_confirmed(
+                    expected_reservation=self._reservation)
+            except Exception:
+                self._uncertain_task = (self._matter_id, task_id, version)
+                self._tasks, self._reviews = (), ()
+                return ActionFeedback(
+                    'committed_refresh_unresolved',
+                    'Local fence clearance unresolved. Do NOT repeat the write.')
+            self._reservation = None
         return ActionFeedback(result.status, allowed[result.status])
 
     def inspect_uncertain_task_read_only(self):
