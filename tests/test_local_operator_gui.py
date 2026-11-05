@@ -358,8 +358,14 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.assertEqual(result.status,'committed_refresh_unresolved')
         self.assertEqual(cl.counts(),(0,0))
         self.assertEqual(self.audit_count('task.complete'),1)
-        self.assertFalse(cl.has_recovery())
+        self.assertTrue(cl.has_recovery())
         self.assertEqual(cl.refresh().open_task_count,0)
+        self.assertEqual(cl.counts(),(0,0))
+        with self.assertRaises(Invalid):
+            cl.complete(0,True)
+        self.assertEqual(cl.inspect_uncertain_task_read_only().status,
+                         'observed_local_observed_completed')
+        self.assertTrue(cl.has_recovery())
         self.assertEqual(self.audit_count('task.complete'),1)
 
     def test_uncertain_task_refresh_cannot_rearm_completion_or_review(self):
