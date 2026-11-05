@@ -6,6 +6,7 @@ certification. No browser, HTTP listener, network or source-gate bypass.
 from pathlib import Path
 import tempfile
 import os
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 from unittest.mock import patch
@@ -23,7 +24,16 @@ def descendants(widget):
     return result
 
 
-@unittest.skipUnless(os.environ.get('DISPLAY'), 'Native Tk requires an authorized graphical display')
+# Native desktop acceptance is an explicit CI decision on Windows/macOS.
+# Linux continues to require an authorized X display (the Linux job uses Xvfb).
+# Do not silently award a platform PASS when its native GUI never ran.
+NATIVE_DESKTOP_REQUIRED = os.environ.get('MTL_NATIVE_TK_REQUIRED') == '1'
+NATIVE_DISPLAY_AUTHORIZED = bool(os.environ.get('DISPLAY')) or (
+    NATIVE_DESKTOP_REQUIRED and os.name == 'nt') or (
+    NATIVE_DESKTOP_REQUIRED and sys.platform == 'darwin')
+
+@unittest.skipUnless(NATIVE_DISPLAY_AUTHORIZED,
+                     'No authorized native desktop session; GUI NOT accepted')
 class NativeTkOperatorAcceptance(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
