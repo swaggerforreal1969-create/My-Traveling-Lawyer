@@ -103,19 +103,7 @@ def collect() -> dict[str, bytes]:
     return result
 
 
-def build(output: Path) -> dict:
-    output = Path(output)
-    if output.exists() or output.is_symlink():
-        raise FileExistsError('Refusing to overwrite existing pilot archive')
-    if not output.parent.is_dir():
-        raise FileNotFoundError('Destination folder missing')
-    source = collect()
-    manifest = {'purpose': 'FICTIONAL OFFLINE PREVIEW',
-                'source_count': len(source),
-                'sha256': {k: sha256(v).hexdigest() for k,v in sorted(source.items())},
-                'independent_security_approval': False,
-                'production_use': False}
-    WINDOWS_START = r"""@echo off
+WINDOWS_START = r"""@echo off
 setlocal
 cd /d "%~dp0"
 echo FICTIONAL OFFLINE PILOT ONLY - NEVER USE REAL CLIENT DATA
@@ -143,7 +131,19 @@ IFS= read -r _unused || true
 exit "$result"
 """
 
-assets = {'launch-windows.cmd': WINDOWS_START.encode('utf-8'),
+def build(output: Path) -> dict:
+    output = Path(output)
+    if output.exists() or output.is_symlink():
+        raise FileExistsError('Refusing to overwrite existing pilot archive')
+    if not output.parent.is_dir():
+        raise FileNotFoundError('Destination folder missing')
+    source = collect()
+    manifest = {'purpose': 'FICTIONAL OFFLINE PREVIEW',
+                'source_count': len(source),
+                'sha256': {k: sha256(v).hexdigest() for k,v in sorted(source.items())},
+                'independent_security_approval': False,
+                'production_use': False}
+        assets = {'launch-windows.cmd': WINDOWS_START.encode('utf-8'),
               'launch-macos.command': POSIX_START.encode('utf-8'),
               'launch-linux.sh': POSIX_START.encode('utf-8'),
               'run_pilot.py': LAUNCHER.encode('utf-8'),
