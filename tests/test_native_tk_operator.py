@@ -351,6 +351,48 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(self.core.db.execute(
             'SELECT count(*) FROM tasks WHERE completed=1').fetchone()[0], 0)
 
+    def test_native_task_completion_shows_fresh_private_workload(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        with patch.object(messagebox,'askyesno',return_value=True):
+            self.buttons['Complete task'].invoke()
+        self.root.update()
+        summary=self.texts[1].get('1.0','end-1c')
+        self.assertIn('PRIVATE ATTORNEY MATTER PORTFOLIO',summary)
+        self.assertIn('Open user-entered tasks: 0',summary)
+        for secret in ('PRIVATE FICTITIOUS CASE','SECRET PRIVATE TASK',
+                       'SECRET SOURCE','SECRET EXCERPT',self.mid,self.reviewer):
+            self.assertNotIn(secret,summary)
+        self.assertEqual(self.listboxes[2].size(),0)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+
+    def test_native_failed_postcommit_workload_read_clears_private_ui(self):
+        self.open()
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        with (
+            patch.object(messagebox,'askyesno',return_value=True),
+            patch.object(LocalOperatorController,'read_only_current_workload',
+                         side_effect=RuntimeError('fictional display failure')),
+            patch.object(messagebox,'showwarning') as warning,
+        ):
+            self.buttons['Complete task'].invoke()
+        self.root.update()
+        self.assertEqual(warning.call_count,1)
+        self.assertEqual(self.texts[1].get('1.0','end-1c'),'')
+        self.assertEqual(self.listboxes[2].size(),0)
+        self.assertEqual(self.listboxes[1].size(),0)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],1)
+
     def test_real_confirm_dialog_rejection_has_zero_writes(self):
         self.open()
         self.select_matter()
