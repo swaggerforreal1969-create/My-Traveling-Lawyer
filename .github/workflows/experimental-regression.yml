@@ -319,6 +319,11 @@ jobs:
         run: python -m unittest discover -s tests -p test_desktop_package.py -v
       - name: Real local pilot authorization, workflow and restart checks
         run: python -m unittest discover -s tests -p test_offline_pilot.py -v
+      - name: Native Windows/macOS Tk full widget acceptance (must execute, not skip)
+        if: matrix.os != 'ubuntu-latest'
+        env:
+          MTL_NATIVE_TK_REQUIRED: '1'
+        run: python -m unittest discover -s tests -p test_native_tk_operator.py -v
       - name: Build reproducible experimental preview archive
         run: python tools/build_offline_pilot_preview.py --output mtl-fictional-preview.zip
       - name: Retain private experimental ZIP for inspection (Linux only)
