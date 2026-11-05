@@ -125,6 +125,20 @@ def capture_fictional_windows(destination):
                 root.update()
                 if (root.winfo_width(), root.winfo_height()) != (w, h):
                     raise RuntimeError("Native Tk window geometry differs from requested size")
+                # Fail the actual screenshot job when essential keyboard help
+                # is outside the native client area, especially at 580x520.
+                from tkinter import ttk
+                help_labels = [item for item in widgets
+                    if isinstance(item, ttk.Label)
+                    and str(item.cget("text")).startswith("Keyboard: Alt+M")]
+                if len(help_labels) != 1:
+                    raise RuntimeError("Native keyboard-help label missing")
+                help_label = help_labels[0]
+                bottom = help_label.winfo_rooty() - root.winfo_rooty() + help_label.winfo_height()
+                if not help_label.winfo_ismapped() or bottom > root.winfo_height():
+                    raise RuntimeError(
+                        f"Native keyboard-help footer clipped at {w}x{h}: "
+                        f"bottom={bottom}, height={root.winfo_height()}")
                 out = folder / f"fictional_operator_{w}x{h}.png"
                 # A read-only capture of the visible synthetic Tk window.
                 _native_x11_png(root, out)
