@@ -136,6 +136,86 @@ class LocalOperatorController:
             self._durable_fence is not None and self._matter_id is not None
             and self._durable_fence.is_pending()))
 
+
+    def _create_authorized(self, kind, text, *, due_at=None):
+        """Explicit local write with persistent conservative no-replay fencing.
+
+        If an outcome or refresh is uncertain, do not clear the pending fence.
+        The unknown generic reservation requires authorized incident review.
+        """
+        self._assert_no_uncertain_review()
+        core = self.operator.core
+        if self._durable_fence is None:
+            raise Denied('Durable local write fence required')
+        if not isinstance(text, str) or not text.strip():
+            raise Invalid('A title is required')
+        if kind == 'task' and self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        with core.lock:
+            actor = core._identity(self._token)
+            if kind == 'task':
+                core._role(actor, self._matter_id, ('owner', 'editor'))
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+        self._reservation = self._durable_fence.begin()
+        self._tasks, self._reviews = (), ()
+        # The backend independently authorizes under its own transaction.
+        # An exception after begin leaves the fence pending, never retries.
+        if kind == 'matter':
+            created = core.create_matter(self._token, text)
+        else:
+            created = core.create_task(self._token, self._matter_id, text, due_at)
+        try:
+            if not core.verify_audit():
+                raise Denied('Post-write local audit verification failed')
+            if kind == 'matter':
+                index = self.operator.matters(self._token)
+                if not any(item['matter_id'] == created['id']
+                           for item in index['matters']):
+                    raise Denied('Created matter not visible after fresh authorization')
+            else:
+                # Reauthorization and independent local row readback, without
+                # exposing task content in the graphical status.
+                self.operator.select_matter(self._token, self._matter_id)
+                actor = core._identity(self._token)
+                core._role(actor, self._matter_id, ('owner', 'editor'))
+                row = core.db.execute(
+                    'SELECT matter_id FROM tasks WHERE id=?',
+                    (created['id'],)).fetchone()
+                if row is None or row['matter_id'] != self._matter_id:
+                    raise Denied('Created task unavailable after write')
+            self._durable_fence.finish_confirmed(
+                expected_reservation=self._reservation)
+            self._reservation = None
+            if kind == 'matter':
+                self._clear()
+                self._matters = ()
+            else:
+                self._load_authorized_work()
+            return ActionFeedback(kind + '_created',
+                                  ('Matter' if kind == 'matter' else 'Task') +
+                                  ' saved. Authorized workload refreshed.')
+        except Exception:
+            # Never imply a safe retry after a successful backend write.
+            self._tasks, self._reviews = (), ()
+            return ActionFeedback('committed_refresh_unresolved',
+                                  'Saved work may exist; confirmation unresolved. '
+                                  'Do NOT repeat. Obtain read-only incident review.')
+
+    def create_matter(self, title, confirmed):
+        if not confirmed:
+            return ActionFeedback('cancelled', 'Cancelled; no write performed.')
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 160:
+            raise Invalid('Matter title must be 1–160 characters')
+        return self._create_authorized('matter', title.strip())
+
+    def create_task(self, title, due_at, confirmed):
+        if not confirmed:
+            return ActionFeedback('cancelled', 'Cancelled; no write performed.')
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 200:
+            raise Invalid('Task text must be 1–200 characters')
+        return self._create_authorized('task', title.strip(), due_at=due_at)
+
     def review(self, position, decision, note, confirmed):
         if not confirmed:
             return ActionFeedback('cancelled', 'Cancelled; no write performed.')
@@ -867,6 +947,86 @@ def launch_gui(core, token, *, run_mainloop=True):
         except (Denied, Invalid, Stale, EvidenceInvalid):
             status.set('Read-only recovery unresolved. Do NOT repeat the write.')
             update_controls()
+
+
+    def create_record(kind):
+        """A single deliberate, confidential local desktop create action."""
+        if write_confirmation['active']:
+            status.set('Another confirmation is active. No new write.')
+            return
+        if kind == 'task' and controller._matter_id is None:
+            status.set('Select a current matter before adding a task.')
+            return
+        if controller.has_recovery():
+            status.set('A write is unresolved. No new write permitted.')
+            return
+        dialog = tk.Toplevel(root)
+        dialog.title('New fictional matter' if kind == 'matter' else 'New fictional task')
+        dialog.transient(root)
+        dialog.resizable(False, False)
+        form = ttk.Frame(dialog, padding=12)
+        form.pack(fill='both', expand=True)
+        ttk.Label(form, text='Private title (not displayed after saving)').pack(anchor='w')
+        title_input = ttk.Entry(form, width=48)
+        title_input.pack(fill='x')
+        due_input = None
+        if kind == 'task':
+            ttk.Label(form, text='User-entered UTC date and time, e.g. 2030-01-01T00:00:00Z').pack(anchor='w')
+            due_input = ttk.Entry(form, width=48)
+            due_input.insert(0, '2030-01-01T00:00:00Z')
+            due_input.pack(fill='x')
+        before = controller._matter_id
+        def submit():
+            if write_confirmation['active']:
+                return
+            title = title_input.get()
+            due = due_input.get() if due_input is not None else None
+            if not title.strip() or len(title.strip()) > (160 if kind == 'matter' else 200):
+                status.set('Enter a valid private title; no write performed.')
+                title_input.focus_set()
+                return
+            write_confirmation['active'] = True
+            try:
+                if not messagebox.askyesno('Confirm save',
+                    'Save this one fictional ' + kind + '? No automatic retry.',
+                    parent=dialog):
+                    return
+                if kind == 'task' and controller._matter_id != before:
+                    raise Denied('Matter changed during confirmation')
+                if controller.has_recovery():
+                    raise Denied('A prior write remains unresolved')
+                result = (controller.create_matter(title, True) if kind == 'matter'
+                          else controller.create_task(title, due, True))
+                title_input.delete(0, 'end')
+                if due_input is not None:
+                    due_input.delete(0, 'end')
+                dialog.destroy()
+                status.set(result.message)
+                if result.status == 'matter_created':
+                    refresh_lists()
+                elif result.status == 'task_created':
+                    display_counts()
+                else:
+                    clear_stale_actions()
+                    messagebox.showwarning('Save unresolved', result.message,
+                                           parent=root)
+            except (Denied, Invalid, Stale, EvidenceInvalid):
+                status.set('Save denied or uncertain. Do not repeat without review.')
+                clear_stale_actions()
+            finally:
+                write_confirmation['active'] = False
+                update_controls()
+        ttk.Button(form, text='Save ' + kind, command=submit).pack(side='left', pady=8)
+        ttk.Button(form, text='Cancel', command=dialog.destroy).pack(side='right', pady=8)
+        dialog.protocol('WM_DELETE_WINDOW', dialog.destroy)
+        title_input.focus_set()
+
+    create_menu = tk.Menu(root, tearoff=False)
+    create_menu.add_command(label='New matter', command=lambda: create_record('matter'))
+    create_menu.add_command(label='New task', command=lambda: create_record('task'))
+    root_menu = tk.Menu(root, tearoff=False)
+    root_menu.add_cascade(label='Create', menu=create_menu)
+    root.configure(menu=root_menu)
 
     portfolio_button = ttk.Button(buttons,text='Workload (read only)',
                                   command=show_portfolio)
