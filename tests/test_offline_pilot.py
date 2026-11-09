@@ -8,7 +8,7 @@ from unittest.mock import patch
 import os
 import unittest
 
-from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
+from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot, inspect_fictional_pilot, main
 from src.secure_engine import SecureCore, Denied
 from src.durable_local_write_fence import LocalWriteFence
 from src.local_operator_gui import LocalOperatorController
@@ -134,6 +134,49 @@ class OfflinePilotLifecycleTests(unittest.TestCase):
             self.assertEqual(core.db.execute(
                 "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
             ).fetchone()[0], 1)
+
+
+    def test_view_only_status_after_restart_and_no_audit_write(self):
+        credentials = self.initialize()
+        with _closing_core(self.path) as core:
+            before = core.db.execute('SELECT count(*) FROM audit_chain').fetchone()[0]
+            self.assertTrue(core.verify_audit())
+        report = inspect_fictional_pilot(self.path, credentials['reviewer_token'])
+        self.assertIn('Open user-entered tasks: 1', report['summary'])
+        self.assertIn('Second-human reviews waiting: 1', report['summary'])
+        self.assertNotIn('Fictional Research Matter', report['summary'])
+        self.assertFalse(report['write_unresolved'])
+        with _closing_core(self.path) as core:
+            self.assertEqual(core.db.execute('SELECT count(*) FROM audit_chain').fetchone()[0],before)
+
+    def test_view_only_status_revoked_denied_and_no_gui(self):
+        credentials = self.initialize()
+        with _closing_core(self.path) as core:
+            core.revoke_token(credentials['reviewer_token'])
+        with patch('src.local_operator_gui.launch_gui') as gui:
+            with self.assertRaises(Denied):
+                inspect_fictional_pilot(self.path,credentials['reviewer_token'])
+            gui.assert_not_called()
+
+    def test_view_only_status_never_clears_pending_fence(self):
+        credentials = self.initialize()
+        fence = LocalWriteFence(self.path)
+        fence.begin()
+        report = inspect_fictional_pilot(self.path,credentials['reviewer_token'])
+        self.assertTrue(report['write_unresolved'])
+        self.assertTrue(fence.is_pending())
+
+    def test_view_only_cli_masks_credential_and_denies_invalid_token(self):
+        credentials = self.initialize()
+        from io import StringIO
+        from contextlib import redirect_stdout
+        with patch('src.offline_pilot.getpass',return_value=credentials['reviewer_token']), redirect_stdout(StringIO()) as out:
+            self.assertEqual(main(['status','--database',str(self.path)]),0)
+        self.assertIn('PRIVATE ATTORNEY MATTER PORTFOLIO',out.getvalue())
+        self.assertNotIn(credentials['reviewer_token'],out.getvalue())
+        with patch('src.offline_pilot.getpass',return_value='invalid'),redirect_stdout(StringIO()) as denied:
+            self.assertEqual(main(['status','--database',str(self.path)]),1)
+        self.assertNotIn('Fictional Research Matter',denied.getvalue())
 
 
 class _closing_core:
