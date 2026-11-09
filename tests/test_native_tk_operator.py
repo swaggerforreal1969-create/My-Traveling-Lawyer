@@ -111,6 +111,28 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                 root.destroy()
                 opened_core.close()
 
+
+    def test_native_create_menu_opens_cancelable_private_dialog(self):
+        self.open(self.author)
+        menu = self.root.nametowidget(self.root.cget('menu'))
+        self.assertEqual(menu.entrycget(0,'label'),'Create')
+        actions = self.root.nametowidget(menu.entrycget(0,'menu'))
+        self.assertEqual(actions.entrycget(0,'label'),'New matter')
+        self.assertEqual(actions.entrycget(1,'label'),'New task')
+        actions.invoke(0)
+        self.root.update()
+        dialogs = [x for x in self.root.winfo_children()
+                   if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(dialogs),1)
+        widget = dialogs[0]
+        self.assertIn('New fictional matter',widget.title())
+        buttons=[x for x in descendants(widget) if isinstance(x,ttk.Button)]
+        cancel=next(x for x in buttons if x.cget('text')=='Cancel')
+        cancel.invoke()
+        self.root.update()
+        self.assertFalse(widget.winfo_exists())
+        self.assertTrue(self.core.verify_audit())
+
     def test_real_widget_layout_focus_and_enabled_actions(self):
         self.open()
         self.assertGreaterEqual(self.root.winfo_width(), 580)
