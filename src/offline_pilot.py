@@ -120,10 +120,38 @@ def open_fictional_pilot(database: Path, token: str, *, run_mainloop=True):
             core.close()
 
 
+
+def inspect_fictional_pilot(database: Path, token: str):
+    """Reauthorize a minimized workload readback without opening a GUI.
+
+    Never clears an unresolved write fence or attempts a task/review write.
+    Existing local databases are experimental, not independently trusted.
+    """
+    path = Path(database).expanduser()
+    if not path.is_file() or path.is_symlink():
+        raise Denied('An existing regular fictional pilot database is required')
+    if not token or not isinstance(token, str):
+        raise Denied('Local credential required')
+    core = SecureCore(path)
+    try:
+        from .private_attorney_operator import PrivateAttorneyOperator
+        # Do not extend the user's idle deadline merely by checking records.
+        with core.passive_authorization():
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+            pending = LocalWriteFence(path).is_pending()
+            summary = PrivateAttorneyOperator(core).portfolio_summary(token)
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+        return {'summary': summary, 'write_unresolved': pending}
+    finally:
+        core.close()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=BANNER)
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('init', 'open'):
+    for name in ('init', 'open', 'status'):
         sub.add_parser(name).add_argument('--database', type=Path, required=True)
     args = parser.parse_args(argv)
     print(BANNER)
@@ -135,6 +163,18 @@ def main(argv=None):
         print('Store these separately; never paste them into chat or logs.')
         print('Next: python -m src.offline_pilot open --database',
               result['database'])
+    elif args.command == 'status':
+        token = getpass('Local fictional pilot token (hidden): ')
+        try:
+            report = inspect_fictional_pilot(args.database, token)
+        except (Denied, Invalid):
+            print('Saved-work check denied or unavailable. No task/review write attempted.')
+            return 1
+        print(report['summary'])
+        if report['write_unresolved']:
+            print('LOCAL WRITE UNRESOLVED — do not repeat an earlier action.')
+        else:
+            print('No pending local write fence detected; independent custody unverified.')
     else:
         token = getpass('Local fictional pilot token (hidden): ')
         try:
