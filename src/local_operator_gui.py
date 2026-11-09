@@ -214,6 +214,17 @@ class LocalOperatorController:
             return ActionFeedback('cancelled', 'Cancelled; no write performed.')
         if not isinstance(title, str) or not 1 <= len(title.strip()) <= 200:
             raise Invalid('Task text must be 1–200 characters')
+        # User typing errors are not uncertain writes; reject BEFORE reserving
+        # a crash-durable fence, so a bad timestamp never locks the pilot.
+        from datetime import datetime
+        if not isinstance(due_at, str):
+            raise Invalid('Timezone-aware ISO task date required')
+        try:
+            timestamp = datetime.fromisoformat(due_at.replace('Z', '+00:00'))
+            if timestamp.tzinfo is None:
+                raise ValueError('Missing timezone')
+        except ValueError as exc:
+            raise Invalid('Timezone-aware ISO task date required') from exc
         return self._create_authorized('task', title.strip(), due_at=due_at)
 
     def review(self, position, decision, note, confirmed):
