@@ -98,17 +98,19 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.assertEqual(self.audit_count('matter.create'),2)
         self.assertTrue(fence.is_pending())
 
-    def test_create_task_invalid_timestamp_fails_closed_and_not_replayed(self):
+    def test_invalid_task_date_rejects_before_write_fence_and_allows_correction(self):
         path=Path(self.tmp.name)/'fictional.sqlite3'
         fence=LocalWriteFence(path)
         client=LocalOperatorController(self.core,self.author,durable_fence=fence)
         self.select(client)
-        with self.assertRaises(Invalid):
-            client.create_task('FICTITIOUS TASK','not-a-date',True)
-        self.assertTrue(fence.is_pending())
-        with self.assertRaises(Denied):
-            client.create_task('RETRY MUST DENY','2030-01-01T00:00:00Z',True)
+        for wrong in ('not-a-date','2030-01-01T00:00:00',None):
+            with self.assertRaises(Invalid):
+                client.create_task('FICTITIOUS TASK',wrong,True)
+            self.assertFalse(fence.is_pending())
         self.assertEqual(self.audit_count('task.create'),1)
+        self.assertEqual(client.create_task('CORRECTED TASK','2030-01-01T00:00:00Z',True).status,'task_created')
+        self.assertFalse(fence.is_pending())
+        self.assertEqual(self.audit_count('task.create'),2)
 
     def test_revoked_actor_cannot_create_new_matter(self):
         fence=LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3')
