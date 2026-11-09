@@ -111,6 +111,80 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                 root.destroy()
                 opened_core.close()
 
+
+    def test_native_create_menu_opens_cancelable_private_dialog(self):
+        self.open(self.author)
+        menu = self.root.nametowidget(self.root.cget('menu'))
+        self.assertEqual(menu.entrycget(0,'label'),'Create')
+        actions = self.root.nametowidget(menu.entrycget(0,'menu'))
+        self.assertEqual(actions.entrycget(0,'label'),'New matter')
+        self.assertEqual(actions.entrycget(1,'label'),'New task')
+        actions.invoke(0)
+        self.root.update()
+        dialogs = [x for x in self.root.winfo_children()
+                   if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(dialogs),1)
+        widget = dialogs[0]
+        self.assertIn('New fictional matter',widget.title())
+        buttons=[x for x in descendants(widget) if isinstance(x,ttk.Button)]
+        cancel=next(x for x in buttons if x.cget('text')=='Cancel')
+        cancel.invoke()
+        self.root.update()
+        self.assertFalse(widget.winfo_exists())
+        self.assertTrue(self.core.verify_audit())
+
+
+    def test_real_native_create_matter_and_task_complete_customer_entry(self):
+        self.open(self.author)
+        menu = self.root.nametowidget(self.root.cget('menu'))
+        actions = self.root.nametowidget(menu.entrycget(0,'menu'))
+        with patch.object(messagebox,'askyesno',return_value=True):
+            actions.invoke(0)
+            self.root.update()
+            dialog = next(x for x in self.root.winfo_children()
+                          if isinstance(x,tk.Toplevel))
+            entry = next(x for x in descendants(dialog)
+                         if isinstance(x,ttk.Entry))
+            entry.insert(0,'PRIVATE NEW FICTIONAL MATTER')
+            save = next(x for x in descendants(dialog)
+                        if isinstance(x,ttk.Button)
+                        and x.cget('text')=='Save matter')
+            save.invoke()
+            self.root.update()
+            self.assertFalse(dialog.winfo_exists())
+            idx = next(i for i,item in enumerate(self.core.list_matters(self.author))
+                       if item['title']=='PRIVATE NEW FICTIONAL MATTER')
+            self.listboxes[0].selection_clear(0,'end')
+            self.listboxes[0].selection_set(idx)
+            self.listboxes[0].event_generate('<<ListboxSelect>>')
+            self.root.update()
+            self.buttons['Select matter'].invoke()
+            self.root.update()
+            actions.invoke(1)
+            self.root.update()
+            task_dialog = next(x for x in self.root.winfo_children()
+                               if isinstance(x,tk.Toplevel))
+            entries = [x for x in descendants(task_dialog)
+                       if isinstance(x,ttk.Entry)]
+            self.assertEqual(len(entries),2)
+            entries[0].insert(0,'PRIVATE FICTIONAL FOLLOW-UP')
+            entries[1].delete(0,'end')
+            entries[1].insert(0,'2030-01-01T00:00:00Z')
+            save_task = next(x for x in descendants(task_dialog)
+                             if isinstance(x,ttk.Button)
+                             and x.cget('text')=='Save task')
+            save_task.invoke()
+            self.root.update()
+            self.assertFalse(task_dialog.winfo_exists())
+        self.assertTrue(self.core.verify_audit())
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM tasks WHERE text='PRIVATE FICTIONAL FOLLOW-UP'"
+        ).fetchone()[0],1)
+        from src.durable_local_write_fence import LocalWriteFence
+        self.assertFalse(LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3').is_pending())
+        self.assertTrue(all('PRIVATE FICTIONAL FOLLOW-UP' not in
+                            x.get('1.0','end-1c') for x in self.texts))
+
     def test_real_widget_layout_focus_and_enabled_actions(self):
         self.open()
         self.assertGreaterEqual(self.root.winfo_width(), 580)

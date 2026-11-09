@@ -7,6 +7,7 @@ from unittest.mock import patch
 from src.secure_engine import SecureCore, Denied, Invalid
 from src.research_evidence import EvidenceInvalid
 from src.local_operator_gui import LocalOperatorController
+from src.durable_local_write_fence import LocalWriteFence
 
 
 class GraphicalOperatorControllerTests(unittest.TestCase):
@@ -45,6 +46,79 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
     def audit_count(self,action):
         return self.core.db.execute(
             'SELECT count(*) FROM audit_chain WHERE action=?',(action,)).fetchone()[0]
+
+
+    def test_explicit_matter_and_task_creation_and_reopen(self):
+        fence = LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3')
+        client = LocalOperatorController(self.core,self.author,durable_fence=fence)
+        self.assertEqual(client.create_matter('NEW CONFIDENTIAL MATTER',False).status,'cancelled')
+        self.assertEqual(client.create_matter('NEW CONFIDENTIAL MATTER',True).status,'matter_created')
+        self.assertEqual(client.list_matters(),2)
+        # Select the newly created matter by its authorized index.
+        index = client.operator.matters(self.author)['matters']
+        pos = next(i for i,m in enumerate(index)
+                   if self.core.db.execute('SELECT title FROM matters WHERE id=?',
+                                         (m['matter_id'],)).fetchone()[0] ==
+                   'NEW CONFIDENTIAL MATTER')
+        client.select(pos)
+        self.assertEqual(client.create_task('PRIVATE FOLLOW-UP', '2030-01-01T00:00:00Z',True).status,'task_created')
+        self.assertEqual(client.counts(),(1,0))
+        self.assertTrue(self.core.verify_audit())
+        self.assertFalse(fence.is_pending())
+        self.assertEqual(self.audit_count('matter.create'),2)
+        self.assertEqual(self.audit_count('task.create'),2)
+
+    def test_creation_denies_viewer_outsider_and_invalid_dates(self):
+        fence = LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3')
+        viewer = LocalOperatorController(self.core,self.viewer,durable_fence=fence)
+        viewer.list_matters()
+        viewer.select(0)
+        with self.assertRaises(Denied):
+            viewer.create_task('NOT ALLOWED','2030-01-01T00:00:00Z',True)
+        self.assertFalse(fence.is_pending())
+        outsider = LocalOperatorController(self.core,self.outside,durable_fence=fence)
+        outsider.list_matters()
+        with self.assertRaises(Invalid):
+            outsider.create_task('NO MATTER','2030-01-01T00:00:00Z',True)
+        with self.assertRaises(Invalid):
+            viewer.create_task('', 'bad-time',True)
+        self.assertEqual(self.audit_count('task.create'),1)
+
+    def test_uncertain_creation_is_fenced_across_restart(self):
+        path = Path(self.tmp.name)/'fictional.sqlite3'
+        fence = LocalWriteFence(path)
+        client = LocalOperatorController(self.core,self.author,durable_fence=fence)
+        with patch.object(client.operator,'matters',side_effect=RuntimeError('lost readback')):
+            result=client.create_matter('UNCERTAIN FICTIONAL MATTER',True)
+        self.assertEqual(result.status,'committed_refresh_unresolved')
+        self.assertTrue(fence.is_pending())
+        restarted=LocalOperatorController(self.core,self.author,durable_fence=LocalWriteFence(path))
+        with self.assertRaises(Denied):
+            restarted.create_matter('SHOULD NEVER REPLAY',True)
+        self.assertEqual(self.audit_count('matter.create'),2)
+        self.assertTrue(fence.is_pending())
+
+    def test_invalid_task_date_rejects_before_write_fence_and_allows_correction(self):
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        fence=LocalWriteFence(path)
+        client=LocalOperatorController(self.core,self.author,durable_fence=fence)
+        self.select(client)
+        for wrong in ('not-a-date','2030-01-01T00:00:00',None):
+            with self.assertRaises(Invalid):
+                client.create_task('FICTITIOUS TASK',wrong,True)
+            self.assertFalse(fence.is_pending())
+        self.assertEqual(self.audit_count('task.create'),1)
+        self.assertEqual(client.create_task('CORRECTED TASK','2030-01-01T00:00:00Z',True).status,'task_created')
+        self.assertFalse(fence.is_pending())
+        self.assertEqual(self.audit_count('task.create'),2)
+
+    def test_revoked_actor_cannot_create_new_matter(self):
+        fence=LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3')
+        client=LocalOperatorController(self.core,self.reviewer,durable_fence=fence)
+        self.core.revoke_token(self.reviewer)
+        with self.assertRaises(Denied):
+            client.create_matter('BLOCKED',True)
+        self.assertFalse(fence.is_pending())
 
     def test_full_graphical_controller_journey(self):
         cl=self.select()
