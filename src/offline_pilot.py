@@ -11,7 +11,7 @@ from getpass import getpass
 import os
 from pathlib import Path
 
-from .secure_engine import SecureCore, Denied
+from .secure_engine import SecureCore, Denied, Invalid
 from .durable_local_write_fence import LocalWriteFence
 from .attorney_research_workflow import AttorneyResearchWorkflow
 
