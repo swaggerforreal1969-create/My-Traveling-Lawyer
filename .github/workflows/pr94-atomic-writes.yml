@@ -38,3 +38,7 @@ jobs:
           echo "EXACT_SHA_VERIFIED=$actual"
       - name: Real separate-process tenant and recovery security tests
         run: python -m unittest discover -s tests -p test_security_independent_process_gate.py -v
+      - name: Existing authenticated core authorization and audit regressions
+        run: python -m unittest discover -s tests -p test_secure_engine.py -v
+      - name: Existing private operator controller and recovery regressions
+        run: python -m unittest discover -s tests -p test_local_operator_gui.py -v
