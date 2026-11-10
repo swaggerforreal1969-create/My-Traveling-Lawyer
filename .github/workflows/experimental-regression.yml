@@ -43,6 +43,7 @@ jobs:
           python -m py_compile src/task_reconciliation.py tests/test_task_reconciliation.py
           python -m unittest discover -s tests -p 'test_task_reconciliation.py' -q
           python -m unittest discover -s tests -p 'test_audit_mirror_fail_closed.py' -q
+          python -m unittest discover -s tests -p 'test_security_independent_process_gate.py' -q
       - name: Fast private completion preflight acceptance
         run: |
           python -m py_compile src/task_completion_preflight.py tests/test_task_completion_preflight.py
@@ -320,6 +321,8 @@ jobs:
         run: python -m unittest discover -s tests -p test_desktop_package.py -v
       - name: Real local pilot authorization, workflow and restart checks
         run: python -m unittest discover -s tests -p test_offline_pilot.py -v
+      - name: Combined independent-process ACL and audit regression
+        run: python -m unittest discover -s tests -p test_security_independent_process_gate.py -v
       - name: Native Windows/macOS Tk full widget acceptance (must execute, not skip)
         if: matrix.os != 'ubuntu-latest'
         env:

@@ -165,13 +165,29 @@ class SecureCore:
                 WHERE m.firm_id=? AND g.user_id=? ORDER BY m.id''',(u['firm_id'],u['id']))]
 
     def add_note(self, token, matter_id, text):
-        if not isinstance(text,str) or not (1<=len(text.strip())<=2000):raise Invalid('Invalid note')
-        with self.lock, self.db:
-            u=self._identity(token); self._role(u,matter_id,('owner','editor'))
-            nid=str(uuid.uuid4())
-            self.db.execute('INSERT INTO notes VALUES (?,?,?,?)',(nid,matter_id,u['id'],text.strip()))
-            self._audit(u['id'],'note.create',matter_id)
-            return {'id':nid,'matter_id':matter_id}
+        """Hold the SQLite writer lock across credential/ACL admission and write.
+
+        A separate process must not revoke or downgrade the actor BETWEEN
+        authorization and the note/audit commit. Never retry uncertain writes.
+        """
+        if not isinstance(text,str) or not (1<=len(text.strip())<=2000):
+            raise Invalid('Invalid note')
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Note admission requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                self._role(u,matter_id,('owner','editor'))
+                nid=str(uuid.uuid4())
+                self.db.execute('INSERT INTO notes VALUES (?,?,?,?)',
+                                (nid,matter_id,u['id'],text.strip()))
+                self._audit(u['id'],'note.create',matter_id)
+                self.db.commit()
+                return {'id':nid,'matter_id':matter_id}
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def read_notes(self, token, matter_id):
         with self.lock:
