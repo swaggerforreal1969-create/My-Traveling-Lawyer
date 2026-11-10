@@ -116,6 +116,91 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(self.core.db.execute(
             'SELECT count(*) FROM audit_chain').fetchone()[0], audit_before)
 
+    def test_graphical_first_run_real_click_creates_and_reopens_fictional_records(self):
+        """Real Tk widget clicks, real disposable SQLite and real restart.
+
+        The file chooser and credential prompt are controlled test inputs;
+        Tk buttons, dialogs, one-time code display and database remain real.
+        Never emit credentials to CI logs or test failure messages.
+        """
+        from tools.portable_desktop_start import visual_main
+        from src.offline_pilot import (
+            initialize_fictional_pilot, open_fictional_pilot)
+        from src.private_attorney_operator import PrivateAttorneyOperator
+
+        database = Path(self.tmp.name) / "graphical-fictional.sqlite3"
+        original_tk = tk.Tk
+        original_toplevel = tk.Toplevel
+        captured = {}
+        roots = []
+
+        def capture_init(path):
+            result = initialize_fictional_pilot(path)
+            captured["credentials"] = result
+            return result
+
+        def open_without_blocking(path, token):
+            # The normal entrypoint would enter the application's event loop.
+            # This acceptance inspects the actual native operator and exits.
+            operator_root, operator_core = open_fictional_pilot(
+                path, token, run_mainloop=False)
+            try:
+                operator_root.update()
+                view = PrivateAttorneyOperator(operator_core).matters(token)
+                self.assertTrue(view["matters"])
+                self.assertTrue(operator_core.verify_audit())
+                captured.setdefault("opens", 0)
+                captured["opens"] += 1
+            finally:
+                operator_root.destroy()
+                operator_core.close()
+
+        def make_root():
+            root = original_tk()
+            roots.append(root)
+            mode = "new" if len(roots) == 1 else "saved"
+            def click():
+                widgets = [w for w in descendants(root)
+                           if isinstance(w, tk.Button)]
+                wanted = ("Create NEW practice workspace" if mode == "new"
+                          else "Open SAVED practice workspace")
+                next(w for w in widgets if w.cget("text") == wanted).invoke()
+            root.after(80, click)
+            return root
+
+        def make_toplevel(parent):
+            window = original_toplevel(parent)
+            def acknowledge():
+                buttons = [w for w in descendants(window)
+                           if isinstance(w, tk.Button)]
+                next(w for w in buttons if
+                     w.cget("text") == "I saved both codes - Open practice").invoke()
+            window.after(80, acknowledge)
+            return window
+
+        with patch.object(tk, "Tk", side_effect=make_root), \
+             patch.object(tk, "Toplevel", side_effect=make_toplevel), \
+             patch("tkinter.filedialog.asksaveasfilename",
+                   return_value=str(database)), \
+             patch("tkinter.filedialog.askopenfilename",
+                   return_value=str(database)), \
+             patch("tkinter.simpledialog.askstring",
+                   side_effect=lambda *args, **kwargs: captured[
+                       "credentials"]["editor_token"]), \
+             patch("src.offline_pilot.initialize_fictional_pilot",
+                   side_effect=capture_init), \
+             patch("src.offline_pilot.open_fictional_pilot",
+                   side_effect=open_without_blocking):
+            self.assertEqual(visual_main(), 0)
+            self.assertTrue(database.is_file())
+            self.assertTrue(Path(str(database) + ".write-fence.sqlite3").is_file())
+            before = database.read_bytes()
+            self.assertEqual(visual_main(), 0)
+            self.assertTrue(database.is_file())
+            self.assertEqual(captured["opens"], 2)
+            self.assertGreater(len(before), 0)
+            self.assertEqual(len(roots), 2)
+
     def test_offline_pilot_opens_real_tk_window_after_database_restart(self):
         from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
         path=Path(self.tmp.name)/'fresh-pilot.sqlite3'
