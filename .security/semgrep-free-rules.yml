@@ -1,0 +1,46 @@
+rules:
+  - id: mtl.python.dynamic-eval
+    languages: [python]
+    severity: ERROR
+    message: Dynamic eval or exec can execute untrusted code; inspect expression provenance.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+  - id: mtl.python.unsafe-pickle
+    languages: [python]
+    severity: ERROR
+    message: Pickle deserialization may execute untrusted code.
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: _pickle.loads(...)
+  - id: mtl.python.shell-true
+    languages: [python]
+    severity: WARNING
+    message: Shell execution requires strict input control; inspect subprocess arguments.
+    pattern-either:
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.Popen(..., shell=True, ...)
+      - pattern: subprocess.call(..., shell=True, ...)
+  - id: mtl.python.unsafe-yaml-load
+    languages: [python]
+    severity: WARNING
+    message: YAML unsafe load requires review of untrusted input.
+    pattern-either:
+      - pattern: yaml.load($X)
+      - pattern: yaml.unsafe_load(...)
+  - id: mtl.python.http-debug
+    languages: [python]
+    severity: WARNING
+    message: Debug mode may expose remote execution.
+    pattern: $APP.run(..., debug=True, ...)
+  - id: mtl.javascript.innerhtml-write
+    languages: [javascript]
+    severity: WARNING
+    message: Dynamic innerHTML must not include untrusted data.
+    pattern: $EL.innerHTML = $EXPR
+  - id: mtl.javascript.code-eval
+    languages: [javascript]
+    severity: ERROR
+    message: JavaScript eval may execute untrusted data.
+    pattern: eval(...)
