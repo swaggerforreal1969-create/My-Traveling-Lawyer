@@ -349,6 +349,18 @@ jobs:
           python prior-version-source/tools/build_self_contained_pilot.py --output prior-frozen-fictional
           python -m unittest discover -s tests -p test_cross_version_upgrade.py -v
           python -m tools.qualify_cross_version_upgrade --old-source prior-frozen-fictional --new-source mtl-frozen-fictional
+      - name: Native fictional installer window and safe-cancel acceptance
+        if: matrix.os != 'ubuntu-latest'
+        run: |
+          python -m unittest discover -s tests -p test_fictional_installer_window.py -v
+          python -m tools.verify_fictional_installer_gui --source mtl-frozen-fictional
+        env:
+          MTL_TEST_ONLY_INSTALLER: '1'
+      - name: Linux virtual-display installer window and safe-cancel acceptance
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          xvfb-run -a python -m unittest discover -s tests -p test_fictional_installer_window.py -v
+          xvfb-run -a python -m tools.verify_fictional_installer_gui --source mtl-frozen-fictional
       - name: Build reproducible experimental preview archive
         run: python tools/build_offline_pilot_preview.py --output mtl-fictional-preview.zip
       - name: Retain private experimental ZIP for inspection (Linux only)
