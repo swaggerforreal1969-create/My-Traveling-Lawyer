@@ -112,6 +112,53 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                 opened_core.close()
 
 
+
+    def test_hidden_new_matter_dialog_purges_unsaved_private_title(self):
+        self.open(self.author)
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        creation=self.root.nametowidget(menu.entrycget(0,'menu'))
+        before=self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='matter.create'"
+        ).fetchone()[0]
+        creation.invoke(0)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        entry=next(x for x in descendants(dialog) if isinstance(x,ttk.Entry))
+        entry.insert(0,'SECRET UNSAVED CLIENT MATTER')
+        self.assertTrue(dialog.winfo_exists())
+        self.root.withdraw()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='matter.create'"
+        ).fetchone()[0],before)
+        self.assertTrue(self.core.verify_audit())
+
+    def test_revoked_new_task_dialog_purges_unsaved_private_title_and_date(self):
+        self.open(self.author)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        creation=self.root.nametowidget(menu.entrycget(0,'menu'))
+        before=self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.create'"
+        ).fetchone()[0]
+        creation.invoke(1)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        entries=[x for x in descendants(dialog) if isinstance(x,ttk.Entry)]
+        self.assertEqual(len(entries),2)
+        entries[0].insert(0,'SECRET UNSAVED PRIVATE TASK')
+        self.core.revoke_token(self.author)
+        self.root.privacy_check()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.create'"
+        ).fetchone()[0],before)
+        self.assertTrue(self.core.verify_audit())
+
     def test_native_create_menu_opens_cancelable_private_dialog(self):
         self.open(self.author)
         menu = self.root.nametowidget(self.root.cget('menu'))
