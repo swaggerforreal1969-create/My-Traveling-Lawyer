@@ -315,6 +315,49 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.assertFalse(LocalWriteFence(path).is_pending())
         self.assertTrue(self.core.verify_audit())
 
+    def test_owner_sees_unique_colleague_names_not_token_or_ids(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        from pathlib import Path
+        cl=LocalOperatorController(self.core,self.author,
+               durable_fence=LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3'))
+        cl.list_matters()
+        cl.select(0)
+        choices=cl.named_second_reviewer_choices()
+        self.assertIn((self.reviewer_id,'Reviewer'),choices)
+        self.assertIn((self.viewer_id,'Reader'),choices)
+        self.assertNotIn(self.reviewer,str(choices))
+        self.assertNotIn(self.author,str(choices))
+
+    def test_duplicate_reviewer_names_fail_before_any_write(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        from pathlib import Path
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        cl=LocalOperatorController(self.core,self.author,
+               durable_fence=LocalWriteFence(path))
+        cl.list_matters()
+        cl.select(0)
+        firm=self.core._identity(self.author)['firm_id']
+        self.core.provision_user(firm,'Reviewer')
+        with self.assertRaises(Denied):
+            cl.named_second_reviewer_choices()
+        self.assertFalse(LocalWriteFence(path).is_pending())
+
+    def test_revoked_or_changed_staff_denied_at_name_recheck(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        from pathlib import Path
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        cl=LocalOperatorController(self.core,self.author,
+               durable_fence=LocalWriteFence(path))
+        cl.list_matters()
+        cl.select(0)
+        before=cl.named_second_reviewer_choices()
+        self.core.db.execute('UPDATE users SET active=0 WHERE id=?',
+                             (self.reviewer_id,))
+        self.assertNotEqual(before,cl.named_second_reviewer_choices())
+        with self.assertRaises(Denied):
+            cl.allow_second_reviewer(self.reviewer_id,3,True)
+        self.assertFalse(LocalWriteFence(path).is_pending())
+
     def test_full_graphical_controller_journey(self):
         cl=self.select()
         self.assertEqual(cl.counts(),(1,1))
