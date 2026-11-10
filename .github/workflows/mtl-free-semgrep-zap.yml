@@ -67,6 +67,86 @@ jobs:
           path: semgrep-local-summary.json
           retention-days: 3
           if-no-files-found: error
+  semgrep-community:
+    name: Free community security rules, no source upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Preserve original-source boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MTL_EXACT_SHA=$(git rev-parse HEAD)"
+          test ! -e src/secure_server.py
+          test ! -e src/app.js
+          test ! -e src/index.html
+          test ! -e src/secure_app.js
+          test ! -e src/secure_index.html
+      - name: Install free OSS CLI
+        run: python -m pip install --disable-pip-version-check 'semgrep>=1.100,<2'
+      - name: Download public community rule files locally (never upload application)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 --filter=blob:none --sparse --branch develop \
+            https://github.com/semgrep/semgrep-rules.git "$RUNNER_TEMP/community-rules"
+          git -C "$RUNNER_TEMP/community-rules" sparse-checkout set \
+            python/lang/security javascript/lang/security
+          echo "PUBLIC_COMMUNITY_RULES_COMMIT=$(git -C "$RUNNER_TEMP/community-rules" rev-parse HEAD)"
+          test -d "$RUNNER_TEMP/community-rules/python/lang/security"
+          test -d "$RUNNER_TEMP/community-rules/javascript/lang/security"
+      - name: Scan authorized source with downloaded local community rules
+        shell: bash
+        env:
+          SEMGREP_SEND_METRICS: 'off'
+          SEMGREP_ENABLE_VERSION_CHECK: '0'
+        run: |
+          set -euo pipefail
+          semgrep scan --metrics off \
+            --config "$RUNNER_TEMP/community-rules/python/lang/security" \
+            --config "$RUNNER_TEMP/community-rules/javascript/lang/security" \
+            --json --output "$RUNNER_TEMP/mtl-community-private-full.json" \
+            src tests tools
+          python - <<'PY'
+          import json,os,subprocess
+          from pathlib import Path
+          folder=Path(os.environ['RUNNER_TEMP'])
+          data=json.loads((folder/'mtl-community-private-full.json').read_text())
+          if data.get('errors'):
+              print('COMMUNITY_SCAN_RULE_ERRORS='+str(len(data['errors'])))
+              raise SystemExit(1)
+          rules=folder/'community-rules'
+          rev=subprocess.check_output(['git','-C',str(rules),'rev-parse','HEAD'],text=True).strip()
+          records=[{'rule':r['check_id'],'file':r['path'],'line':r['start']['line'],
+                    'severity':r.get('extra',{}).get('severity','UNKNOWN')}
+                   for r in data.get('results',[])]
+          summary={'app_sha':os.environ['GITHUB_SHA'],'community_rule_revision':rev,
+                   'config_dirs':['python/lang/security','javascript/lang/security'],
+                   'scope':'Authorized src tests tools; 10 restricted originals excluded',
+                   'findings':records,'finding_count':len(records),
+                   'coverage_note':'Community security rules only, not proof of no vulnerabilities',
+                   'code_uploaded_to_semgrep_platform':False,'semgrep_metrics':'off'}
+          Path('semgrep-community-summary.json').write_text(json.dumps(summary,indent=2))
+          print('COMMUNITY_APP_SHA='+summary['app_sha'])
+          print('COMMUNITY_RULE_SHA='+rev)
+          print('COMMUNITY_FINDING_COUNT='+str(len(records)))
+          for row in records[:30]:
+              print('{rule} {file}:{line} {severity}'.format(**row))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtl-community-semgrep-summary-no-source
+          path: semgrep-community-summary.json
+          retention-days: 3
+          if-no-files-found: error
   zap-boundary:
     name: OWASP ZAP passive preflight (no supported HTTP app)
     runs-on: ubuntu-latest
