@@ -232,7 +232,7 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
                             new['matter_id'],('owner','editor'))
         self.assertEqual(owner.allow_second_reviewer(self.reviewer,
                         new['version'],False).status,'cancelled')
-        self.assertEqual(owner.allow_second_reviewer(self.reviewer,
+        self.assertEqual(owner.allow_second_reviewer(self.reviewer_id,
                          new['version'],True).status,'reviewer_authorized')
         self.assertFalse(LocalWriteFence(path).is_pending())
         self.assertEqual(owner.create_task('Fictional new task',
