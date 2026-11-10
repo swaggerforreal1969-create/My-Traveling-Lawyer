@@ -194,6 +194,22 @@ class PortablePreviewAcceptance(unittest.TestCase):
         self.assertIn('FICTIONAL OFFLINE PILOT ONLY', result.stdout)
         self.assertIn('Tk module: available', result.stdout)
 
+    @unittest.skipIf(os.name == 'nt', 'POSIX shell launcher required')
+    def test_posix_script_denies_modified_startup_before_python_executes_it(self):
+        import shutil
+        if not shutil.which('python3'):
+            self.skipTest('python3 not present')
+        root = self.extract()
+        launcher = root / 'start_pilot.py'
+        launcher.write_bytes(launcher.read_bytes() +
+                             b'\\nraise SystemExit("UNEXPECTED_STARTUP_EXECUTION")\\n')
+        result = subprocess.run(
+            ['sh', 'Open-Practice-Linux.sh'], cwd=str(root),
+            input='', text=True, capture_output=True, timeout=35)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Pilot integrity denied', result.stderr)
+        self.assertNotIn('UNEXPECTED_STARTUP_EXECUTION', result.stderr)
+
     @unittest.skipUnless(os.name == 'nt', 'Windows CMD acceptance requires Windows')
     def test_real_windows_cmd_starts_verified_pilot_and_cancels(self):
         root = self.extract()
