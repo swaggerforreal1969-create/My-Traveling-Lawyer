@@ -1165,6 +1165,9 @@ def launch_gui(core, token, *, run_mainloop=True):
         dialog.title('New fictional matter' if kind == 'matter' else 'New fictional task')
         dialog.transient(root)
         dialog.resizable(False, False)
+        # Creation drafts are confidential too. Register this window with the
+        # existing privacy purge for hide/minimize/revocation/failed auth.
+        private_forms.append(dialog)
         form = ttk.Frame(dialog, padding=12)
         form.pack(fill='both', expand=True)
         ttk.Label(form, text='Private title (not displayed after saving)').pack(anchor='w')
