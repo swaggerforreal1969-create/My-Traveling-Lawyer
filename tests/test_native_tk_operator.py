@@ -211,6 +211,25 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertFalse(form.winfo_exists())
         self.assertTrue(self.core.verify_audit())
 
+
+    def test_native_reviewer_access_dialog_opens_only_for_owner(self):
+        self.open(self.author)
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        self.assertEqual(menu.entrycget(2,'label'),'Allow second reviewer')
+        self.select_matter()
+        menu.invoke(2)
+        self.root.update()
+        forms=[x for x in self.root.winfo_children()
+               if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(forms),1)
+        self.assertEqual(forms[0].title(),'Allow a second reviewer')
+        buttons=[x for x in descendants(forms[0])
+                 if isinstance(x,ttk.Button)]
+        next(x for x in buttons if x.cget('text')=='Cancel').invoke()
+        self.root.update()
+        self.assertFalse(forms[0].winfo_exists())
+        self.assertTrue(self.core.verify_audit())
+
     def test_real_widget_layout_focus_and_enabled_actions(self):
         self.open()
         self.assertGreaterEqual(self.root.winfo_width(), 580)
