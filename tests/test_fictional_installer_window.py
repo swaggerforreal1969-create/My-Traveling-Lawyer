@@ -83,6 +83,32 @@ class InstallerWindowTests(unittest.TestCase):
             self.assertTrue(dest.exists())
             self.assertIn("Success", self.panel.status.get())
 
+    def test_cleanup_requires_choice_and_never_removes_other_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            destination = root / "new-test-version"
+            pending = root / ".mtl-new-test-version-pending-synthetic"
+            pending.mkdir()
+            (pending / "FICTIONAL-INCOMPLETE.txt").write_text(
+                "FICTIONAL-STAGING-ONLY\nnew-test-version\n", encoding="utf-8")
+            (pending / "app").mkdir()
+            (pending / "app" / "partial.txt").write_text("INCOMPLETE")
+            unrelated = root / "external-practice.sqlite3"
+            unrelated.write_bytes(b"UNCHANGED FICTIONAL DATA")
+            self.panel.destination.set(str(destination))
+            with patch("tools.fictional_installer_window.messagebox.askyesno",
+                       return_value=False):
+                self.panel.clean_interrupted()
+            self.assertTrue(pending.exists())
+            self.assertIn("Cancelled", self.panel.status.get())
+            with patch("tools.fictional_installer_window.messagebox.askyesno",
+                       return_value=True):
+                self.panel.clean_interrupted()
+            self.assertFalse(pending.exists())
+            self.assertFalse(destination.exists())
+            self.assertEqual(unrelated.read_bytes(), b"UNCHANGED FICTIONAL DATA")
+            self.assertIn("cleared", self.panel.status.get())
+
     def test_cancel_button_destroys_window(self):
         buttons = [w for w in self.panel.root.winfo_children()[0].winfo_children()
                    if isinstance(w, __import__("tkinter.ttk", fromlist=["Button"]).Button)]
