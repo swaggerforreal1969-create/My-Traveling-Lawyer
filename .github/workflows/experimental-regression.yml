@@ -338,6 +338,17 @@ jobs:
         run: |
           python -m unittest discover -s tests -p test_fictional_install.py -v
           python tools/qualify_fictional_install.py --source mtl-frozen-fictional
+      - name: Check out protected prior fictional version for strict cross-version test
+        uses: actions/checkout@v4
+        with:
+          ref: 9dd4de82638b17c668c088e0c82b2b380823389a
+          path: prior-version-source
+          persist-credentials: false
+      - name: Build protected prior version and qualify distinct-code upgrade
+        run: |
+          python prior-version-source/tools/build_self_contained_pilot.py --output prior-frozen-fictional
+          python -m unittest discover -s tests -p test_cross_version_upgrade.py -v
+          python tools/qualify_cross_version_upgrade.py --old-source prior-frozen-fictional --new-source mtl-frozen-fictional
       - name: Build reproducible experimental preview archive
         run: python tools/build_offline_pilot_preview.py --output mtl-fictional-preview.zip
       - name: Retain private experimental ZIP for inspection (Linux only)
