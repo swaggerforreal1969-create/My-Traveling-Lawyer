@@ -76,6 +76,11 @@ def prepare_staging(staging: Path) -> tuple[Path, Path]:
     boot = staging / "frozen_bootstrap.py"
     boot.write_text(template.replace("__MANIFEST_SHA256__", manifest_sha),
                     encoding="utf-8")
+    # Include only this newly authored fictional acceptance driver as a
+    # staged build-time module. Never expose full repository source to the
+    # PyInstaller analyzer (the ten restricted originals stay out of scope).
+    harness = ROOT / "tools" / "frozen_gui_acceptance.py"
+    (staging / "frozen_gui_acceptance.py").write_bytes(harness.read_bytes())
     return package, boot
 
 
@@ -94,12 +99,15 @@ def build(output: Path) -> Path:
             "--clean", "--name", APP_NAME, "--distpath", str(dist),
             "--workpath", str(Path(tmp) / "work"),
             "--specpath", str(Path(tmp) / "spec"),
+            "--paths", str(package.parent),
+            "--paths", str(package),
             "--add-data", str(package) + os.pathsep + ROOT_NAME,
             "--hidden-import", "tkinter",
             "--hidden-import", "tkinter.filedialog",
             "--hidden-import", "tkinter.messagebox",
             "--hidden-import", "tkinter.simpledialog",
             "--hidden-import", "sqlite3", "--hidden-import", "_sqlite3",
+            "--hidden-import", "frozen_gui_acceptance",
             str(bootstrap),
         ]
         subprocess.run(cmd, cwd=str(package.parent), check=True)
@@ -109,6 +117,38 @@ def build(output: Path) -> Path:
         executable = built / (APP_NAME + (".exe" if os.name == "nt" else ""))
         if not executable.is_file():
             raise RuntimeError("Self-contained fictional executable not found")
+        subprocess.run([str(executable), "--verify"], cwd=str(built),
+                       check=True, timeout=60)
+        # The actual compiled executable drives native Tk in a disposable
+        # directory; OS file choosers/confirmations receive synthetic inputs.
+        env = os.environ.copy()
+        env.pop("PYTHONHOME", None)
+        env.pop("PYTHONPATH", None)
+        env["MTL_FICTIONAL_CI_ACCEPTANCE"] = "1"
+        command = [str(executable), "--gui-acceptance"]
+        if sys.platform.startswith("linux") and not env.get("DISPLAY"):
+            if not shutil.which("xvfb-run"):
+                raise RuntimeError("Virtual X display required for Linux Tk")
+            command = ["xvfb-run", "-a", *command]
+        subprocess.run(command, cwd=str(built), env=env,
+                       check=True, timeout=210)
+        # The compiled binary itself must reject modified bundled assets.
+        internal = built / "_internal" / ROOT_NAME
+        if not internal.is_dir():
+            raise RuntimeError("Expected bundled fictional package missing")
+        for name in ("MANIFEST.json", "run_pilot.py", "start_pilot.py"):
+            item = internal / name
+            original = item.read_bytes()
+            try:
+                item.write_bytes(original + b"\n# synthetic modification\n")
+                result = subprocess.run(
+                    [str(executable), "--verify"], cwd=str(built),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=60)
+                if result.returncode == 0:
+                    raise RuntimeError("Frozen tampered package accepted: " + name)
+            finally:
+                item.write_bytes(original)
         subprocess.run([str(executable), "--verify"], cwd=str(built),
                        check=True, timeout=60)
         shutil.move(str(built), str(output))
