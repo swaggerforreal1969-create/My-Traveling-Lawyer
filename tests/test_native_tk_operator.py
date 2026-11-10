@@ -142,8 +142,10 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         def open_without_blocking(path, token):
             # The normal entrypoint would enter the application's event loop.
             # This acceptance inspects the actual native operator and exits.
-            operator_root, operator_core = open_fictional_pilot(
-                path, token, run_mainloop=False)
+            # The nested attorney window is not a second setup window.
+            with patch.object(tk, "Tk", original_tk):
+                operator_root, operator_core = open_fictional_pilot(
+                    path, token, run_mainloop=False)
             try:
                 operator_root.update()
                 view = PrivateAttorneyOperator(operator_core).matters(token)
