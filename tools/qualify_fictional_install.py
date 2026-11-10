@@ -14,7 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -40,30 +40,88 @@ def assert_private_tree(source: Path) -> None:
                 raise ValueError("Symlink outside fictional package denied")
 
 
+_PENDING_MARKER = "FICTIONAL-INCOMPLETE.txt"
+
+
+def incomplete_copies(destination: Path) -> list[Path]:
+    """Identify only exact marked staging folders, never the installed app."""
+    destination = Path(destination)
+    parent = destination.parent
+    if not parent.is_dir() or parent.is_symlink():
+        return []
+    prefix = ".mtl-" + destination.name + "-pending-"
+    expected = "FICTIONAL-STAGING-ONLY\n" + destination.name + "\n"
+    found = []
+    for candidate in parent.iterdir():
+        if not candidate.name.startswith(prefix):
+            continue
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
+        marker = candidate / _PENDING_MARKER
+        if marker.is_symlink() or not marker.is_file():
+            continue
+        try:
+            if marker.read_text(encoding="utf-8") != expected:
+                continue
+        except (OSError, UnicodeError):
+            continue
+        if (candidate / "app").is_symlink():
+            continue
+        found.append(candidate)
+    return sorted(found)
+
+
+def clean_incomplete_copies(destination: Path) -> int:
+    """Explicit cleanup, only for verified incomplete private test stages."""
+    destination = Path(destination)
+    if destination.is_symlink() or destination.exists():
+        raise FileExistsError("Existing installation must not be cleaned")
+    pending = incomplete_copies(destination)
+    for candidate in pending:
+        if candidate.is_symlink() or not candidate.is_dir():
+            raise ValueError("Unsafe staging folder")
+        shutil.rmtree(candidate)
+    return len(pending)
+
+
 def stage_version(source: Path, destination: Path) -> Path:
-    """Exclusive install to NEW folder; never modify or replace prior version."""
+    """Verify a temporary app before revealing any executable at the final path.
+
+    A terminated process leaves a marked pending folder; old app and separate
+    practice databases remain untouched. Publisher authenticity is not proven.
+    """
     source, destination = Path(source), Path(destination)
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("Existing installed files never overwritten")
     if not destination.parent.is_dir() or destination.parent.is_symlink():
         raise ValueError("Parent install folder missing or linked")
+    if not destination.name or destination.name in (".", ".."):
+        raise ValueError("New install destination required")
     assert_private_tree(source)
     if not executable_at(source).is_file():
         raise ValueError("Fictional executable not found")
+    pending = Path(mkdtemp(prefix=".mtl-" + destination.name + "-pending-",
+                           dir=str(destination.parent)))
+    (pending / _PENDING_MARKER).write_text(
+        "FICTIONAL-STAGING-ONLY\n" + destination.name + "\n",
+        encoding="utf-8")
+    staged = pending / "app"
     try:
-        # copytree itself creates a new directory exclusively, rejecting a
-        # competing existing path. Any failed private copy is removed.
-        shutil.copytree(source, destination, symlinks=True, dirs_exist_ok=False)
-        check = subprocess.run([str(executable_at(destination)), "--verify"],
-                               cwd=str(destination), capture_output=True,
+        shutil.copytree(source, staged, symlinks=True, dirs_exist_ok=False)
+        check = subprocess.run([str(executable_at(staged)), "--verify"],
+                               cwd=str(staged), capture_output=True,
                                text=True, timeout=80)
         if check.returncode != 0 or "integrity: PASS" not in check.stdout:
-            raise RuntimeError("Installed fictional package verification denied")
+            raise RuntimeError("Staged fictional package verification denied")
+        if destination.exists() or destination.is_symlink():
+            raise FileExistsError("Existing installed files never overwritten")
+        # A native rename publishes the entire verified directory in one step.
+        # No cross-platform attacker-resistant no-replace guarantee is claimed.
+        os.rename(staged, destination)
         return destination
-    except BaseException:
-        if destination.is_dir() and not destination.is_symlink():
-            shutil.rmtree(destination)
-        raise
+    finally:
+        if pending.is_dir() and not pending.is_symlink():
+            shutil.rmtree(pending)
 
 
 def read_state(app: Path, database: Path, token: str, expect_pending: bool) -> None:

@@ -11,7 +11,8 @@ import subprocess
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from tools.qualify_fictional_install import stage_version, executable_at
+from tools.qualify_fictional_install import (stage_version, executable_at,
+                                            incomplete_copies, clean_incomplete_copies)
 
 
 class FictionalInstallerWindow:
@@ -61,6 +62,9 @@ class FictionalInstallerWindow:
             row=8, column=2, sticky="e")
         ttk.Label(panel, textvariable=self.status, wraplength=660).grid(
             row=9, column=0, columnspan=3, sticky="w", pady=(15, 0))
+        ttk.Button(panel, text="Clean incomplete test copy",
+                   command=self.clean_interrupted).grid(
+                       row=10, column=0, columnspan=2, sticky="w", pady=(8, 0))
         panel.columnconfigure(0, weight=2)
         panel.columnconfigure(1, weight=1)
 
@@ -124,6 +128,34 @@ class FictionalInstallerWindow:
                                  "Could not verify a safe new install.\n"
                                  "No existing folder was replaced.",
                                  parent=self.root)
+
+    def clean_interrupted(self):
+        """User chooses cleanup; existing installs and records are protected."""
+        try:
+            if not self.destination.get().strip():
+                self.status.set("Choose your NEW test folder first.")
+                return
+            dest = Path(self.destination.get()).expanduser()
+            if dest.exists() or dest.is_symlink():
+                self.status.set("Existing folders are protected. Nothing was removed.")
+                return
+            pending = incomplete_copies(dest)
+            if not pending:
+                self.status.set("No incomplete test copy found. Nothing was removed.")
+                return
+            if not messagebox.askyesno(
+                "Remove incomplete fictional test copy",
+                "Remove only unfinished test files?\n"
+                "Older apps and practice records stay unchanged.",
+                parent=self.root,
+            ):
+                self.status.set("Cancelled. Nothing was removed.")
+                return
+            count = clean_incomplete_copies(dest)
+            self.status.set("Incomplete test files cleared. You may try again."
+                            if count else "No incomplete test files found.")
+        except (OSError, ValueError):
+            self.status.set("Cleanup denied. Existing files were not changed.")
 
     def check_previous_version(self):
         try:
