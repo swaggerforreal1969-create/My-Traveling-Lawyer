@@ -173,12 +173,25 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         def make_toplevel(parent):
             window = original_toplevel(parent)
             def acknowledge():
+                # Assert real native Text shows both newly issued fictional codes.
+                # Boolean-only assertion avoids printing secrets in test failures.
+                texts = [w for w in descendants(window)
+                         if isinstance(w, tk.Text)]
+                self.assertEqual(len(texts), 1)
+                displayed = texts[0].get("1.0", "end-1c")
+                self.assertTrue(
+                    captured["credentials"]["editor_token"] in displayed and
+                    captured["credentials"]["reviewer_token"] in displayed)
                 buttons = [w for w in descendants(window)
                            if isinstance(w, tk.Button)]
                 next(w for w in buttons if
                      w.cget("text") == "I saved both codes - Open practice").invoke()
             window.after(80, acknowledge)
             return window
+
+        def enter_saved_code(*args, **kwargs):
+            self.assertEqual(kwargs.get("show"), "*")
+            return captured["credentials"]["editor_token"]
 
         with patch.object(tk, "Tk", side_effect=make_root), \
              patch.object(tk, "Toplevel", side_effect=make_toplevel), \
@@ -187,8 +200,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
              patch("tkinter.filedialog.askopenfilename",
                    return_value=str(database)), \
              patch("tkinter.simpledialog.askstring",
-                   side_effect=lambda *args, **kwargs: captured[
-                       "credentials"]["editor_token"]), \
+                   side_effect=enter_saved_code), \
              patch("src.offline_pilot.initialize_fictional_pilot",
                    side_effect=capture_init), \
              patch("src.offline_pilot.open_fictional_pilot",
