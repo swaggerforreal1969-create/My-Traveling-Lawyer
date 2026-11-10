@@ -329,6 +329,42 @@ class LocalOperatorController:
         # IDs stay strictly inside the authenticated controller/dialog.
         return tuple(entry['id'] for entry in sources)
 
+    def identifiable_research_sources(self):
+        """Authorized, integrity-checked source labels for a PRIVATE dialog.
+
+        Return exact IDs alongside human-readable title and website. The
+        short opaque suffix disambiguates two sources sharing a title/site.
+        Never display source titles in root status, portfolio or application
+        logs; the existing private-form purge owns the transient dialog.
+        """
+        if self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        import hashlib
+        import json
+        from urllib.parse import urlsplit
+        sources=self.operator.workflow.evidence.list(
+            self._token,self._matter_id)['sources']
+        if len(sources)>100:
+            raise Invalid('Too many sources for safe manual selection')
+        result=[]
+        for item in sources:
+            try:
+                expected=hashlib.sha256(json.dumps(
+                    [item['title'],item['url'],item['excerpt']],
+                    separators=(',',':')).encode()).hexdigest()
+                if expected!=item['content_digest']:
+                    raise EvidenceInvalid('Research source integrity changed')
+                host=urlsplit(item['url']).hostname
+                if not host or not item['title'].strip():
+                    raise EvidenceInvalid('Invalid saved research source')
+                label=item['title'].strip()[:66]+' ('+host.lower()[:60]+') ['+item['id'][:8]+']'
+            except (KeyError,TypeError,ValueError) as exc:
+                raise EvidenceInvalid('Saved source unavailable') from exc
+            result.append((item['id'],label))
+        if len({x[1] for x in result})!=len(result):
+            raise EvidenceInvalid('Research selections ambiguous')
+        return tuple(result)
+
     def _record_manual_research(self, kind, values):
         """One human-confirmed research write, one durable reservation.
 
@@ -1242,7 +1278,8 @@ def launch_gui(core, token, *, run_mainloop=True):
             status.set('Select an authorized matter before adding research.')
             return
         try:
-            sources = controller.available_research_sources()
+            named_sources = controller.identifiable_research_sources()
+            sources = tuple(entry[0] for entry in named_sources)
         except (Denied,Invalid,Stale,EvidenceInvalid):
             clear_all_visible_work()
             status.set('Research access denied. Reauthenticate.')
@@ -1264,9 +1301,10 @@ def launch_gui(core, token, *, run_mainloop=True):
                             ('url','HTTPS source URL (not fetched)'),
                             ('excerpt','Manually entered excerpt'))
         else:
-            ttk.Label(form,text='Source number (no confidential title shown)').pack(anchor='w')
-            chosen = ttk.Combobox(form,state='readonly',
-                     values=tuple('Source '+str(i+1) for i in range(len(sources))))
+            ttk.Label(form,text='Choose the saved research source by title and website. '
+                       'Private to this window.',wraplength=390).pack(anchor='w')
+            chosen = ttk.Combobox(form,state='readonly',width=64,
+                     values=tuple(label for _,label in named_sources))
             chosen.current(0)
             chosen.pack(fill='x')
             specifications=(('captured','Manually observed source text'),
@@ -1301,9 +1339,19 @@ def launch_gui(core, token, *, run_mainloop=True):
             # after the native modal's nested Tk event processing.
             write_confirmation['active']=True
             try:
+                if kind=='observation':
+                    idx=chosen.current()
+                    if (idx<0 or idx>=len(named_sources) or
+                        chosen.get()!=named_sources[idx][1] or
+                        named_sources!=controller.identifiable_research_sources()):
+                        raise Stale('Selected research source changed')
+                    approved_source_id=named_sources[idx][0]
+                    approval='Save this manual observation for '+named_sources[idx][1]+\
+                        '? This is NOT verified legal authority.'
+                else:
+                    approval='Save this fictional manual source? Not verified law.'
                 if not messagebox.askyesno('Confirm manual research entry',
-                    'Save this fictional manual research entry? Not verified law.',
-                    parent=dialog):
+                    approval,parent=dialog):
                     return
                 if controller._matter_id!=original_matter or controller.has_recovery():
                     raise Denied('Matter or safety status changed')
@@ -1311,12 +1359,15 @@ def launch_gui(core, token, *, run_mainloop=True):
                     result=controller.add_research_source(
                         values['title'],values['url'],values['excerpt'],True)
                 else:
-                    idx=chosen.current()
-                    if idx<0 or idx>=len(sources) or (
-                            sources!=controller.available_research_sources()):
-                        raise Stale('Source list changed')
+                    # Confirmation dialog can run nested Tk callbacks:
+                    # reauthorize exact ID + title/site mapping once more.
+                    if (idx!=chosen.current() or
+                        chosen.get()!=named_sources[idx][1] or
+                        named_sources!=controller.identifiable_research_sources() or
+                        approved_source_id!=named_sources[idx][0]):
+                        raise Stale('Research source changed during confirmation')
                     result=controller.record_research_observation(
-                        sources[idx],values['captured'],values['note'],True)
+                        approved_source_id,values['captured'],values['note'],True)
                 for input_field in fields.values():
                     erase_private(input_field)
                 dialog.destroy()
