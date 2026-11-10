@@ -230,9 +230,11 @@ def main() -> int:
             SealedFictionalInstaller(root, payload)
             root.mainloop()
             return 0
-    except (OSError, RuntimeError, tarfile.TarError, ValueError):
-        print("FICTIONAL INSTALLER DENIED: bundled app is not verified",
-              file=sys.stderr)
+    except (OSError, RuntimeError, tarfile.TarError, ValueError) as exc:
+        # Synthetic test only: show the error class and a bounded explanation.
+        # Never output source files, access codes, or fictional database rows.
+        print("FICTIONAL INSTALLER DENIED:", type(exc).__name__,
+              str(exc)[:180], file=sys.stderr)
         return 2
 
 
