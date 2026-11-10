@@ -5,7 +5,7 @@ on:
       - engineering/pr92-independent-process-security-gate-20261110
   pull_request:
     branches:
-      - engineering/multiline-private-research-entry-20261109
+      - engineering/identified-research-source-selection-20261110
 permissions:
   contents: read
 jobs:
@@ -24,7 +24,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-          cache: ''
       - name: Confirm exact source SHA
         shell: bash
         env:
