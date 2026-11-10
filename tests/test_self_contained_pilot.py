@@ -18,6 +18,9 @@ class FrozenPilotPrebuildAcceptance(unittest.TestCase):
             root, boot = prepare_staging(Path(tmp) / "stage")
             digest = sha256((root / "MANIFEST.json").read_bytes()).hexdigest()
             self.assertIn(digest, boot.read_text(encoding="utf-8"))
+            self.assertTrue((boot.parent / "frozen_gui_acceptance.py").is_file())
+            self.assertIn("from frozen_gui_acceptance import run",
+                          boot.read_text(encoding="utf-8"))
             self.assertEqual(len(list((root / "src").glob("*.py"))), 23)
             self.assertFalse((root / "src" / "__init__.py").exists())
             verify_tree(root, digest)

@@ -63,7 +63,7 @@ def main(argv=None) -> int:
         if os.environ.get("MTL_FICTIONAL_CI_ACCEPTANCE") != "1":
             print("Fictional GUI self-test not enabled", file=sys.stderr)
             return 2
-        from tools.frozen_gui_acceptance import run
+        from frozen_gui_acceptance import run
         return run(root)
     sys.argv = [str(root / "start_pilot.py"), "--gui"]
     try:

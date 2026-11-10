@@ -76,6 +76,11 @@ def prepare_staging(staging: Path) -> tuple[Path, Path]:
     boot = staging / "frozen_bootstrap.py"
     boot.write_text(template.replace("__MANIFEST_SHA256__", manifest_sha),
                     encoding="utf-8")
+    # Include only this newly authored fictional acceptance driver as a
+    # staged build-time module. Never expose full repository source to the
+    # PyInstaller analyzer (the ten restricted originals stay out of scope).
+    harness = ROOT / "tools" / "frozen_gui_acceptance.py"
+    (staging / "frozen_gui_acceptance.py").write_bytes(harness.read_bytes())
     return package, boot
 
 
@@ -94,13 +99,14 @@ def build(output: Path) -> Path:
             "--clean", "--name", APP_NAME, "--distpath", str(dist),
             "--workpath", str(Path(tmp) / "work"),
             "--specpath", str(Path(tmp) / "spec"),
+            "--paths", str(package.parent),
             "--add-data", str(package) + os.pathsep + ROOT_NAME,
             "--hidden-import", "tkinter",
             "--hidden-import", "tkinter.filedialog",
             "--hidden-import", "tkinter.messagebox",
             "--hidden-import", "tkinter.simpledialog",
             "--hidden-import", "sqlite3", "--hidden-import", "_sqlite3",
-            "--hidden-import", "tools.frozen_gui_acceptance",
+            "--hidden-import", "frozen_gui_acceptance",
             str(bootstrap),
         ]
         subprocess.run(cmd, cwd=str(package.parent), check=True)
