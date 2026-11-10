@@ -60,7 +60,9 @@ def run(package_root: Path) -> int:
                     buttons["Select matter"].invoke()
                     app.update()
                     if state["opens"] == 0:
-                        assert lists[1].size() == 1 and lists[2].size() == 1
+                        # The initial attorney can complete their task. The
+                        # separate reviewer sees research awaiting review.
+                        assert lists[2].size() == 1
                         app.open_private_brief()
                         app.update()
                         briefs = [x for x in app.winfo_children()
@@ -74,6 +76,18 @@ def run(package_root: Path) -> int:
                         assert "Fictional Source Title" in brief_text
                         briefs[0].destroy()
                         app.update()
+                        lists[2].selection_set(0)
+                        lists[2].event_generate("<<ListboxSelect>>")
+                        app.update()
+                        with patch.object(messagebox, "askyesno", return_value=True):
+                            buttons["Complete task"].invoke()
+                        app.update()
+                        assert core.db.execute(
+                            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+                        ).fetchone()[0] == 1
+                    elif state["opens"] == 1:
+                        # Reopen with the independently issued reviewer code.
+                        assert lists[1].size() == 1 and lists[2].size() == 0
                         lists[1].selection_set(0)
                         lists[1].event_generate("<<ListboxSelect>>")
                         app.update()
@@ -84,16 +98,8 @@ def run(package_root: Path) -> int:
                         assert core.db.execute(
                             "SELECT count(*) FROM source_second_review"
                         ).fetchone()[0] == 1
-                        lists[2].selection_set(0)
-                        lists[2].event_generate("<<ListboxSelect>>")
-                        app.update()
-                        with patch.object(messagebox, "askyesno", return_value=True):
-                            buttons["Complete task"].invoke()
-                        app.update()
-                        assert core.db.execute(
-                            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
-                        ).fetchone()[0] == 1
                     else:
+                        # Fresh process state after both legitimate operations.
                         assert lists[1].size() == 0 and lists[2].size() == 0
                         assert core.db.execute(
                             "SELECT count(*) FROM source_second_review"
@@ -149,7 +155,9 @@ def run(package_root: Path) -> int:
 
         def credential(*args, **kwargs):
             assert kwargs.get("show") == "*"
-            return state["codes"]["editor_token"]
+            return (state["codes"]["reviewer_token"]
+                    if state["setup_windows"] == 2
+                    else state["codes"]["editor_token"])
 
         with (patch.object(tk, "Tk", side_effect=make_root),
               patch.object(tk, "Toplevel", side_effect=make_codes),
@@ -160,7 +168,7 @@ def run(package_root: Path) -> int:
                     side_effect=create_fictional),
               patch("src.offline_pilot.open_fictional_pilot",
                     side_effect=open_native)):
-            for _ in range(2):
+            for _ in range(3):
                 prior = sys.argv
                 try:
                     sys.argv = [str(package_root / "start_pilot.py"), "--gui"]
@@ -173,7 +181,7 @@ def run(package_root: Path) -> int:
                     sys.argv = prior
                 assert not errors and db.is_file()
 
-        assert state["setup_windows"] == 2 and state["opens"] == 2
+        assert state["setup_windows"] == 3 and state["opens"] == 3
         assert (Path(str(db) + ".write-fence.sqlite3")).is_file()
         report = inspect_fictional_pilot(db, state["codes"]["editor_token"])
         assert not report["write_unresolved"]
@@ -190,6 +198,6 @@ def run(package_root: Path) -> int:
             pass
         else:
             raise AssertionError("Existing fictional records were overwritten")
-    print("FROZEN FICTIONAL GUI: two real Tk windows, private research,"
+    print("FROZEN FICTIONAL GUI: three real Tk windows, private research,"
           " review, task completion, safe restart, audit and denials PASS")
     return 0
