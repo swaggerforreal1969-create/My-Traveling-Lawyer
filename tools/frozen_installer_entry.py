@@ -185,7 +185,15 @@ def internal_gui_test(payload: Path) -> int:
                  patch("tools.fictional_installer_window.messagebox.showinfo"):
                 panel.install.invoke()
             if panel.last_result != destination or not executable_at(destination).is_file():
-                raise RuntimeError("Verified frozen GUI copy did not install")
+                # Fictional-only diagnostic: isolate the actual staging fault.
+                from tools.qualify_fictional_install import stage_version
+                try:
+                    stage_version(payload, Path(tmp) / "diagnostic-frozen-copy")
+                except Exception as exc:
+                    raise RuntimeError("Frozen GUI staging denied: " +
+                                       type(exc).__name__ + ": " +
+                                       str(exc)[:130]) from None
+                raise RuntimeError("Frozen GUI did not complete after confirmed stage")
             if not executable_at(payload).is_file():
                 raise RuntimeError("Bundled prior executable was damaged")
             with patch("tools.fictional_installer_window.messagebox.showerror"):
