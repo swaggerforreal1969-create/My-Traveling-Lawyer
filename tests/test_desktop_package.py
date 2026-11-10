@@ -171,6 +171,79 @@ class PortablePreviewAcceptance(unittest.TestCase):
         self.assertIn('FICTIONAL OFFLINE PILOT ONLY', result.stdout)
         self.assertIn('Tk module: available', result.stdout)
 
+    def test_visual_launchers_are_packaged_without_network_or_new_installer_claim(self):
+        root = self.extract()
+        expected = ("Open-Practice-Windows.cmd", "Open-Practice-macOS.command",
+                    "Open-Practice-Linux.sh")
+        with ZipFile(self.archive) as archive:
+            for filename in expected:
+                body = (root / filename).read_text(encoding="utf-8")
+                self.assertIn("start_pilot.py --gui", body)
+                self.assertNotIn("pip install", body)
+                self.assertNotIn("curl ", body)
+                self.assertNotIn("wget ", body)
+                self.assertIn("mtl-fictional-preview/" + filename, archive.namelist())
+        self.assertIn("Open-Practice-Windows.cmd", (root / "README.txt").read_text())
+
+    def test_visual_setup_cancel_does_not_create_records(self):
+        from unittest.mock import patch
+        from tools.portable_desktop_start import visual_main
+        with patch("tkinter.Tk") as root, patch("tkinter.Label"), \
+             patch("tkinter.Button"), \
+             patch("src.offline_pilot.initialize_fictional_pilot") as init, \
+             patch("src.offline_pilot.open_fictional_pilot") as open_pilot:
+            self.assertEqual(visual_main(), 0)
+            root.return_value.mainloop.assert_called_once()
+            init.assert_not_called()
+            open_pilot.assert_not_called()
+
+    def test_visual_setup_creates_new_only_and_keeps_token_out_of_process_args(self):
+        from unittest.mock import patch
+        from tools.portable_desktop_start import visual_main
+        candidate = str(self.folder / "new-visual-fictional.sqlite3")
+        with patch("tkinter.Tk") as root, patch("tkinter.Toplevel"), \
+             patch("tkinter.Label"), patch("tkinter.Text") as text, \
+             patch("tkinter.Button") as buttons, \
+             patch("tkinter.filedialog.asksaveasfilename", return_value=candidate), \
+             patch("src.offline_pilot.initialize_fictional_pilot",
+                   return_value={"editor_token": "synthetic-attorney-secret",
+                                 "reviewer_token": "synthetic-reviewer-secret"}) as init, \
+             patch("src.offline_pilot.open_fictional_pilot") as open_pilot:
+            def trigger(label):
+                matches = [call.kwargs["command"] for call in buttons.call_args_list
+                           if call.kwargs.get("text") == label]
+                self.assertEqual(len(matches), 1, label)
+                matches[0]()
+            root.return_value.wait_window.side_effect = lambda _win: trigger(
+                "I saved both codes - Open practice")
+            root.return_value.mainloop.side_effect = lambda: trigger(
+                "Create NEW practice workspace")
+            self.assertEqual(visual_main(), 0)
+            init.assert_called_once_with(Path(candidate))
+            open_pilot.assert_called_once_with(
+                Path(candidate), "synthetic-attorney-secret")
+            value = text.return_value.insert.call_args.args[1]
+            self.assertIn("synthetic-reviewer-secret", value)
+            self.assertIn("synthetic-attorney-secret", value)
+
+    def test_visual_setup_rejects_existing_file_before_initialization(self):
+        from unittest.mock import patch
+        from tools.portable_desktop_start import visual_main
+        existing = self.folder / "keep-existing.sqlite3"
+        existing.write_bytes(b"EXISTING FICTIONAL RECORD")
+        with patch("tkinter.Tk") as root, patch("tkinter.Label"), \
+             patch("tkinter.Button") as buttons, \
+             patch("tkinter.filedialog.asksaveasfilename", return_value=str(existing)), \
+             patch("tkinter.messagebox.showerror") as denied, \
+             patch("src.offline_pilot.initialize_fictional_pilot") as init:
+            root.return_value.mainloop.side_effect = lambda: [
+                call.kwargs["command"]() for call in buttons.call_args_list
+                if call.kwargs.get("text") == "Create NEW practice workspace"][0]
+            self.assertEqual(visual_main(), 0)
+            denied.assert_called_once()
+            init.assert_not_called()
+            self.assertEqual(existing.read_bytes(), b"EXISTING FICTIONAL RECORD")
+
     def test_extracted_symlink_is_refused(self):
         if not hasattr(os,'symlink'):
             self.skipTest('Platform does not support symlinks')
