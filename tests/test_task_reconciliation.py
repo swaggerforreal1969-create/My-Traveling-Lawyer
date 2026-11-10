@@ -95,11 +95,13 @@ class TaskReconciliationTests(unittest.TestCase):
         ).fetchone()[0], 1)
         self.assertTrue(self.core.verify_audit())
 
-    def test_missing_completion_audit_is_denied_even_if_remaining_chain_valid(self):
+    def test_missing_completion_audit_invalidates_chain_and_denies_reconciliation(self):
         self.core.complete_task(self.token, self.tid, 1)
         self.core.db.execute("DELETE FROM audit_chain WHERE action='task.complete' AND target=?",
                              (self.tid,))
-        self.assertTrue(self.core.verify_audit())
+        # New mirror guard detects the deleted event, rather than letting a
+        # consistent but truncated chain masquerade as a complete history.
+        self.assertFalse(self.core.verify_audit())
         with self.assertRaises(Invalid):
             self.observe()
 
