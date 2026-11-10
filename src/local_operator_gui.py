@@ -917,7 +917,7 @@ def launch_gui(core, token, *, run_mainloop=True):
                       wraplength=580).pack(anchor='w')
             area = tk.Text(body, wrap='word', takefocus=True)
             area.pack(fill='both', expand=True, pady=(8, 6))
-            area.insert('1.0', '\\n'.join(lines))
+            area.insert('1.0', '\n'.join(lines))
             area.configure(state='disabled')
             ttk.Button(body, text='Close brief', command=dialog.destroy).pack(anchor='e')
             area.focus_set()
