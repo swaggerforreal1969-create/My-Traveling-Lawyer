@@ -361,6 +361,10 @@ jobs:
         run: |
           xvfb-run -a python -m unittest discover -s tests -p test_fictional_installer_window.py -v
           xvfb-run -a python -m tools.verify_fictional_installer_gui --source mtl-frozen-fictional
+      - name: Build and exercise frozen installer itself without customer Python
+        run: |
+          python -m unittest discover -s tests -p test_frozen_installer.py -v
+          python -m tools.build_frozen_installer --source mtl-frozen-fictional --output mtl-self-contained-installer
       - name: Build reproducible experimental preview archive
         run: python tools/build_offline_pilot_preview.py --output mtl-fictional-preview.zip
       - name: Retain private experimental ZIP for inspection (Linux only)
