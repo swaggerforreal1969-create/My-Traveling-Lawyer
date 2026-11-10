@@ -126,8 +126,12 @@ cd /d "%~dp0"
 echo FICTIONAL OFFLINE PILOT ONLY - NEVER USE REAL CLIENT DATA
 where py >nul 2>nul
 if %errorlevel%==0 (
+    py -3 run_pilot.py --verify
+    if errorlevel 1 exit /b 2
     py -3 start_pilot.py
 ) else (
+    python run_pilot.py --verify
+    if errorlevel 1 exit /b 2
     python start_pilot.py
 )
 set "pilot_exit=%errorlevel%"
@@ -141,6 +145,7 @@ POSIX_START = """#!/bin/sh
 # Fictional-only local pilot. No downloads, network services or privileges.
 cd -- "$(dirname -- "$0")" || exit 2
 printf '%s\\n' 'FICTIONAL OFFLINE PILOT ONLY - NEVER USE REAL CLIENT DATA'
+python3 run_pilot.py --verify || exit 2
 python3 start_pilot.py
 result=$?
 printf '%s\\n' 'Pilot closed. Press Enter to close this window.'
