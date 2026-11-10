@@ -8,8 +8,8 @@ import unittest
 from zipfile import ZipFile
 
 from tools.build_offline_pilot_preview import build as build_preview, ROOT_NAME
-from tools.build_self_contained_pilot import extract_approved, prepare_staging
-from tools.frozen_pilot_bootstrap import verify_tree
+from tools.build_self_contained_pilot import extract_approved, prepare_staging, bundled_stdlib_imports
+from tools.frozen_pilot_bootstrap import verify_tree, main
 
 
 class FrozenPilotPrebuildAcceptance(unittest.TestCase):
@@ -24,6 +24,16 @@ class FrozenPilotPrebuildAcceptance(unittest.TestCase):
             with patch("sys.frozen", False, create=True):
                 from tools.frozen_pilot_bootstrap import main
                 self.assertEqual(main(["--verify"]), 2)
+
+    def test_dynamic_source_stdlib_imports_are_bundled_without_restricted_modules(self):
+        with TemporaryDirectory() as tmp:
+            root, _ = prepare_staging(Path(tmp) / "stage")
+            modules = bundled_stdlib_imports(root)
+            self.assertIn("getpass", modules)
+            self.assertIn("sqlite3", modules)
+            self.assertIn("tkinter.ttk", modules)
+            self.assertNotIn("src.secure_server", modules)
+            self.assertTrue(all(not m.startswith("src.") for m in modules))
 
     def test_tampered_manifest_runner_launchers_and_modules_are_denied(self):
         with TemporaryDirectory() as tmp:
@@ -41,6 +51,11 @@ class FrozenPilotPrebuildAcceptance(unittest.TestCase):
                     finally:
                         file.write_bytes(original)
             verify_tree(root, digest)
+
+
+    def test_frozen_gui_hook_is_never_authorized_in_unfrozen_source(self):
+        with patch("sys.frozen", False, create=True):
+            self.assertEqual(main(["--self-test-gui"]), 2)
 
     def test_archive_rejects_restricted_and_extra_source(self):
         with TemporaryDirectory() as tmp:

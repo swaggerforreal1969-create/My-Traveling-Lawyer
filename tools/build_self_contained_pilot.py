@@ -5,6 +5,7 @@ release artifact, not a security approval, and not permission to publish origina
 """
 from __future__ import annotations
 import argparse
+import ast
 from hashlib import sha256
 import json
 import os
@@ -79,6 +80,36 @@ def prepare_staging(staging: Path) -> tuple[Path, Path]:
     return package, boot
 
 
+def bundled_stdlib_imports(package: Path) -> list[str]:
+    """Include stdlib used by approved dynamic sources, absent from PYI graph.
+
+    The runtime source closure lives in a data directory. PyInstaller cannot
+    trace its Python imports during analysis unless they are listed here.
+    Only stdlib module names, never arbitrary unpublished Python, are allowed.
+    """
+    allowed = sys.stdlib_module_names
+    modules: set[str] = set()
+    for filename in sorted((package / "src").glob("*.py")):
+        tree = ast.parse(filename.read_text(encoding="utf-8"),
+                         filename=str(filename))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = (alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = (node.module,)
+            else:
+                continue
+            for name in names:
+                if name.split(".", 1)[0] in allowed:
+                    modules.add(name)
+    # These are needed by the approved fictional Tk entrypoint but are not
+    # guaranteed to be discoverable through dynamic runtime code.
+    modules.update(("getpass", "tkinter", "tkinter.ttk",
+                    "tkinter.filedialog", "tkinter.messagebox",
+                    "tkinter.simpledialog", "sqlite3", "_sqlite3"))
+    return sorted(modules)
+
+
 def build(output: Path) -> Path:
     """Build locally, verify the resulting executable, and never overwrite."""
     output = Path(output).resolve()
@@ -100,6 +131,8 @@ def build(output: Path) -> Path:
             "--hidden-import", "tkinter.messagebox",
             "--hidden-import", "tkinter.simpledialog",
             "--hidden-import", "sqlite3", "--hidden-import", "_sqlite3",
+            *[option for module in bundled_stdlib_imports(package)
+              for option in ("--hidden-import", module)],
             str(bootstrap),
         ]
         subprocess.run(cmd, cwd=str(package.parent), check=True)
@@ -111,6 +144,15 @@ def build(output: Path) -> Path:
             raise RuntimeError("Self-contained fictional executable not found")
         subprocess.run([str(executable), "--verify"], cwd=str(built),
                        check=True, timeout=60)
+        # Inspect a host-native Tk window and real fictional SQLite journey
+        # inside the frozen executable, not a source-only Python test.
+        gui_command = [str(executable), "--self-test-gui"]
+        if sys.platform.startswith("linux"):
+            if not shutil.which("xvfb-run"):
+                raise RuntimeError("Real Linux Tk acceptance needs Xvfb")
+            gui_command = ["xvfb-run", "-a", *gui_command]
+        subprocess.run(gui_command, cwd=str(built),
+                       check=True, timeout=120)
         shutil.move(str(built), str(output))
     return output
 
