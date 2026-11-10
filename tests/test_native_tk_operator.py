@@ -1037,5 +1037,117 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
 
 
+    def test_complete_customer_journey_brief_review_task_and_real_restart(self):
+        """One fictional customer journey on native Tk, with durable readback.
+
+        Reuses real local SecureCore, real widgets, real review/task writes,
+        explicit simulated human confirmation and actual database reopen.
+        No client data, external network, upload, or production authority.
+        """
+        self.open()
+        self.select_matter()
+        self.assertEqual(self.listboxes[1].size(), 1)
+        self.assertEqual(self.listboxes[2].size(), 1)
+        prior = self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0]
+        self.root.open_private_brief()
+        self.root.update()
+        brief = next(w for w in self.root.winfo_children()
+                     if isinstance(w, tk.Toplevel))
+        display = next(w for w in descendants(brief) if isinstance(w, tk.Text))
+        words = display.get('1.0', 'end-1c')
+        for expected in ('PRIVATE FICTITIOUS CASE', 'SECRET PRIVATE TASK',
+                         'SECRET SOURCE', 'IMPORTANT CAUTIONS'):
+            self.assertIn(expected, words)
+        self.assertEqual(str(display.cget('state')), 'disabled')
+        self.assertEqual(prior, self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0])
+        brief.destroy()
+        self.root.update()
+
+        self.listboxes[1].selection_set(0)
+        self.listboxes[1].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        self.texts[0].insert('1.0',
+            'Independent human reviewed fictional source and observation')
+        with patch.object(messagebox, 'askyesno', return_value=True) as confirm:
+            self.buttons['Record review'].invoke()
+        self.root.update()
+        self.assertEqual(confirm.call_count, 1)
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_second_review').fetchone()[0], 1)
+        self.assertEqual(self.listboxes[1].size(), 0)
+
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        with patch.object(messagebox, 'askyesno', return_value=True) as confirm:
+            self.buttons['Complete task'].invoke()
+        self.root.update()
+        self.assertEqual(confirm.call_count, 1)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0], 1)
+        self.assertEqual(self.listboxes[2].size(), 0)
+        self.assertTrue(self.core.verify_audit())
+
+        db_path = Path(self.tmp.name) / 'fictional.sqlite3'
+        self.root.destroy()
+        self.root = None
+        self.core.close()
+        self.core = SecureCore(db_path)
+        self.assertTrue(self.core.verify_audit())
+        self.open()
+        self.select_matter()
+        self.assertEqual(self.listboxes[1].size(), 0)
+        self.assertEqual(self.listboxes[2].size(), 0)
+        last = self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0]
+        self.root.open_private_brief()
+        self.root.update()
+        after = next(w for w in self.root.winfo_children()
+                     if isinstance(w, tk.Toplevel))
+        refreshed = next(w for w in descendants(after)
+                         if isinstance(w, tk.Text)).get('1.0', 'end-1c')
+        self.assertIn('PRIVATE FICTITIOUS CASE', refreshed)
+        self.assertIn('SECRET SOURCE', refreshed)
+        self.assertIn('Open tasks: 0', refreshed)
+        self.assertNotIn('SECRET PRIVATE TASK', refreshed)
+        self.assertEqual(last, self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0])
+        self.root.withdraw()
+        self.root.update()
+        self.assertFalse(after.winfo_exists())
+
+    def test_private_matter_brief_shows_real_work_without_writing_and_purges_on_hide(self):
+        """One attorney action shows real data, with no export and privacy purge."""
+        self.open()
+        self.select_matter()
+        before = self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0]
+        self.root.open_private_brief()
+        self.root.update()
+        dialogs = [x for x in self.root.winfo_children() if isinstance(x, tk.Toplevel)]
+        self.assertEqual(len(dialogs), 1)
+        dialog = dialogs[0]
+        areas = [w for w in descendants(dialog) if isinstance(w, tk.Text)]
+        self.assertEqual(len(areas), 1)
+        content = areas[0].get('1.0', 'end-1c')
+        self.assertIn('PRIVATE MATTER BRIEF', content)
+        self.assertIn('PRIVATE FICTITIOUS CASE', content)
+        self.assertIn('SECRET PRIVATE TASK', content)
+        self.assertIn('SECRET SOURCE', content)
+        self.assertIn('No filing or legal deadline is verified', ''.join(
+            w.cget('text') for w in descendants(dialog) if isinstance(w, ttk.Label)))
+        self.assertIn('does not calculate court deadlines', content)
+        self.assertEqual(str(areas[0].cget('state')), 'disabled')
+        self.assertEqual(before, self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0])
+        # Window visibility loss destroys all confidential transient forms.
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+
 if __name__ == '__main__':
     unittest.main()
