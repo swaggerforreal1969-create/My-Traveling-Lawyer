@@ -240,7 +240,7 @@ def frozen_gui_acceptance(package: Path) -> int:
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if args not in ([], ["--verify"], ["--self-test-gui"]):
+    if args not in ([], ["--verify"], ["--self-test-gui"], ["--self-test-readonly"]):
         print("Fictional application denied: unsupported command", file=sys.stderr)
         return 2
     if not getattr(sys, "frozen", False):
@@ -256,6 +256,30 @@ def main(argv=None) -> int:
         print("Fictional self-contained package integrity: PASS")
         return 0
     sys.path.insert(0, str(root))
+    if args == ["--self-test-readonly"]:
+        # Internal fictional-only installation qualification; private codes
+        # come over stdin, never command arguments or CI logs.
+        try:
+            request = json.loads(sys.stdin.readline(8192))
+            if not isinstance(request, dict) or set(request) != {"database", "token"}:
+                return 2
+            db = Path(request["database"])
+            if (not db.name.startswith("fictional-install-test-")
+                    or db.suffix != ".sqlite3" or not db.is_file()
+                    or db.is_symlink() or not isinstance(request["token"], str)):
+                return 2
+            from src.offline_pilot import inspect_fictional_pilot
+            state = inspect_fictional_pilot(db, request["token"])
+            if not isinstance(state["summary"], str):
+                return 2
+            print("Fictional installation readback: PASS; write fence " +
+                  ("UNRESOLVED" if state["write_unresolved"] else "CLEAR"))
+            return 0
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+            return 2
+        except Exception:
+            # No user secrets, personal data or authorization internals printed.
+            return 2
     if args == ["--self-test-gui"]:
         return frozen_gui_acceptance(root)
     sys.argv = [str(root / "start_pilot.py"), "--gui"]
