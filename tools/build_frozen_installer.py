@@ -23,10 +23,15 @@ def payload_inventory(source: Path) -> dict[str, str]:
     assert_private_tree(source)
     found = {}
     for item in source.rglob("*"):
-        if item.is_file():
-            if item.is_symlink() or item.suffix in (".sqlite3", ".db"):
-                raise ValueError("Unsafe or confidential installer payload")
-            found[item.relative_to(source).as_posix()] = sha256(item.read_bytes()).hexdigest()
+        name = item.relative_to(source).as_posix()
+        if item.is_symlink():
+            if not item.resolve(strict=True).is_relative_to(source.resolve()):
+                raise ValueError("External payload link denied")
+            found[name] = "link:" + os.readlink(item)
+        elif item.is_file():
+            if item.suffix in (".sqlite3", ".db"):
+                raise ValueError("Confidential installer payload")
+            found[name] = sha256(item.read_bytes()).hexdigest()
     if not found or not executable_at(source).is_file():
         raise ValueError("No frozen application payload found")
     return dict(sorted(found.items()))
@@ -43,11 +48,12 @@ def build(source: Path, output: Path) -> Path:
     with TemporaryDirectory(prefix="mtl-installer-build-") as tmp:
         stage = Path(tmp)
         template = ENTRY.read_text(encoding="utf-8")
-        if template.count("__INVENTORY_LITERAL__") != 1:
+        literal = "INVENTORY = {}  # sealed inventory injected only in private build"
+        if template.count(literal) != 1:
             raise RuntimeError("Installer inventory placeholder missing")
         entry = stage / "sealed_installer_bootstrap.py"
         entry.write_text(
-            template.replace("__INVENTORY_LITERAL__", repr(inventory)),
+            template.replace(literal, "INVENTORY = " + repr(inventory)),
             encoding="utf-8")
         dist = stage / "dist"
         cmd = [

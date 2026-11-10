@@ -11,12 +11,12 @@ from pathlib import Path
 import sys
 import tempfile
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 from unittest.mock import patch
 from tools.fictional_installer_window import FictionalInstallerWindow
 from tools.qualify_fictional_install import executable_at
 
-INVENTORY = __INVENTORY_LITERAL__
+INVENTORY = {}  # sealed inventory injected only in private build
 BUNDLE_DIR = "approved-fictional-app"
 
 
@@ -31,10 +31,13 @@ def verify_payload(path: Path) -> None:
         raise RuntimeError("Fictional installer payload denied")
     seen = {}
     for item in path.rglob("*"):
+        name = item.relative_to(path).as_posix()
         if item.is_symlink():
-            raise RuntimeError("Linked fictional installer payload denied")
-        if item.is_file():
-            name = item.relative_to(path).as_posix()
+            target = item.resolve(strict=True)
+            if not target.is_relative_to(path.resolve()):
+                raise RuntimeError("External payload symlink denied")
+            seen[name] = "link:" + os.readlink(item)
+        elif item.is_file():
             if name.endswith(".sqlite3") or name.endswith(".sqlite3-wal"):
                 raise RuntimeError("Client database is forbidden in installer")
             seen[name] = hashlib.sha256(item.read_bytes()).hexdigest()
@@ -56,7 +59,7 @@ class SealedFictionalInstaller(FictionalInstallerWindow):
         for item in panel.winfo_children():
             gi = item.grid_info()
             if int(gi.get("row", -1)) == 2:
-                if isinstance(item, (tk.Entry,)):
+                if isinstance(item, (tk.Entry, ttk.Entry)):
                     item.configure(state="disabled")
                 elif hasattr(item, "configure"):
                     try:
