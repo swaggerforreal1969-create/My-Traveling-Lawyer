@@ -4,6 +4,7 @@ This is an internal test of staged, versioned copies, NOT a customer installer,
 signing, distribution, software auto-updater, or real legal-record migration.
 """
 from __future__ import annotations
+from contextlib import closing
 import argparse
 from hashlib import sha256
 import json
@@ -88,7 +89,9 @@ def reject_wrong_code(app: Path, database: Path) -> None:
 
 def database_snapshot(database: Path) -> tuple:
     # App persistence boundary is independent of its executable directory.
-    with sqlite3.connect(str(database)) as conn:
+    # sqlite3.Connection.__exit__ does not close the file handle on Windows.
+    # Use explicit closing so temporary client records remain replaceable.
+    with closing(sqlite3.connect(str(database))) as conn:
         results = (
             conn.execute("SELECT count(*) FROM firms").fetchone()[0],
             conn.execute("SELECT count(*) FROM matters").fetchone()[0],
