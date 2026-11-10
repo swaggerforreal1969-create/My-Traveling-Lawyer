@@ -228,6 +228,67 @@ class LocalOperatorController:
         return self._create_authorized('task', title.strip(), due_at=due_at)
 
 
+
+    def eligible_second_reviewers(self):
+        """Owner-only, firm-scoped staff IDs. GUI displays positions only."""
+        if self._matter_id is None:
+            raise Invalid('Select a matter first')
+        core=self.operator.core
+        with core.lock:
+            actor=core._identity(self._token)
+            core._role(actor,self._matter_id,('owner',))
+            return tuple(row['id'] for row in core.db.execute(
+                'SELECT id FROM users WHERE firm_id=? AND active=1 AND id<>? ORDER BY id',
+                (actor['firm_id'],actor['id'])).fetchall())
+
+    def allow_second_reviewer(self, user_id, expected_version, confirmed):
+        """Explicit owner-authorized editor grant; never an automatic grant."""
+        if not confirmed:
+            return ActionFeedback('cancelled','Cancelled; no change.')
+        self._assert_no_uncertain_review()
+        if self._matter_id is None or self._durable_fence is None:
+            raise Denied('Current authorized matter and durable fence required')
+        if type(expected_version) is not int or expected_version<1:
+            raise Invalid('Invalid matter revision')
+        core=self.operator.core
+        with core.lock:
+            actor=core._identity(self._token)
+            owner=core._role(actor,self._matter_id,('owner',))
+            if owner['version']!=expected_version:
+                raise Stale('Matter version changed')
+            if user_id not in self.eligible_second_reviewers():
+                raise Denied('Reviewer must be active within the same firm')
+            if not core.verify_audit():
+                raise Denied('Audit unavailable')
+        self._reservation=self._durable_fence.begin()
+        self._tasks,self._reviews=(),()
+        try:
+            result=core.grant(self._token,self._matter_id,user_id,
+                              'editor',expected_version)
+            if not core.verify_audit():
+                raise Denied('Grant audit unresolved')
+            # Authorize owner again and require exact revision and scope.
+            actor=core._identity(self._token)
+            latest=core._role(actor,self._matter_id,('owner',))
+            if latest['version']!=result['version']:
+                raise Stale('Grant version not observed')
+            observed=core.db.execute(
+                'SELECT role FROM grants WHERE matter_id=? AND user_id=?',
+                (self._matter_id,user_id)).fetchone()
+            if observed is None or observed['role']!='editor':
+                raise Denied('Second-reviewer access not observed')
+            self._durable_fence.finish_confirmed(
+                expected_reservation=self._reservation)
+            self._reservation=None
+            self._load_authorized_work()
+            return ActionFeedback('reviewer_authorized',
+                'One same-firm reviewer authorized. No source or task was sent.')
+        except Exception:
+            self._tasks,self._reviews=(),()
+            return ActionFeedback('write_unresolved',
+                'Reviewer access outcome unresolved. Do NOT repeat. '
+                'Local safety lock remains pending.')
+
     def available_research_sources(self):
         """Privacy-safe index of authorized manually entered sources."""
         if self._matter_id is None:
@@ -1221,12 +1282,77 @@ def launch_gui(core, token, *, run_mainloop=True):
         dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
         fields[specifications[0][0]].focus_set()
 
+
+    def allow_second_review_dialog():
+        if write_confirmation['active'] or controller.has_recovery():
+            status.set('Unresolved write or confirmation active. No permission change.')
+            return
+        try:
+            users=controller.eligible_second_reviewers()
+            actor=core._identity(controller._token)
+            revision=core._role(actor,controller._matter_id,('owner',))['version']
+        except (Denied,Invalid,Stale):
+            status.set('Only the authorized matter owner can allow a reviewer.')
+            return
+        if not users:
+            status.set('No other active staff member exists in this fictional firm.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Allow a second reviewer')
+        dialog.transient(root)
+        private_forms.append(dialog)
+        form=ttk.Frame(dialog,padding=10)
+        form.pack(fill='both',expand=True)
+        ttk.Label(form,text='Choose an existing same-firm staff member. '
+                  'This grants edit/review access to this matter only.',
+                  wraplength=360).pack(anchor='w')
+        choices=ttk.Combobox(form,state='readonly',
+            values=tuple('Staff '+str(i+1) for i in range(len(users))))
+        choices.current(0)
+        choices.pack(fill='x')
+        original_matter=controller._matter_id
+        def save():
+            if write_confirmation['active']:
+                return
+            write_confirmation['active']=True
+            try:
+                if not messagebox.askyesno('Confirm reviewer access',
+                    'Allow this fictional staff member to edit and review '
+                    'the selected matter?',parent=dialog):
+                    return
+                idx=choices.current()
+                if (controller._matter_id!=original_matter or
+                    idx<0 or idx>=len(users) or
+                    users!=controller.eligible_second_reviewers()):
+                    raise Stale('Matter or staff list changed')
+                result=controller.allow_second_reviewer(
+                    users[idx],revision,True)
+                dialog.destroy()
+                status.set(result.message)
+                if result.status=='reviewer_authorized':
+                    display_counts()
+                    status.set(result.message)
+                else:
+                    clear_stale_actions()
+                    messagebox.showwarning('Reviewer access unresolved',
+                        result.message,parent=root)
+            except (Denied,Invalid,Stale):
+                status.set('Reviewer authorization denied; no change approved.')
+            finally:
+                write_confirmation['active']=False
+                update_controls()
+        ttk.Button(form,text='Allow reviewer',command=save).pack(side='left')
+        ttk.Button(form,text='Cancel',command=dialog.destroy).pack(side='right')
+        dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
+        choices.focus_set()
+
     research_menu=tk.Menu(root,tearoff=False)
     research_menu.add_command(label='Add manual source',
         command=lambda: research_entry('source'))
     research_menu.add_command(label='Record manual observation',
         command=lambda: research_entry('observation'))
     root_menu.add_cascade(label='Research',menu=research_menu)
+    root_menu.add_command(label='Allow second reviewer',command=allow_second_review_dialog)
 
     portfolio_button = ttk.Button(buttons,text='Workload (read only)',
                                   command=show_portfolio)
