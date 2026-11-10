@@ -5,6 +5,7 @@ The builder replaces the pinned digest. SHA-256 here is NOT code signing.
 from __future__ import annotations
 import hashlib
 import json
+import os
 from pathlib import Path
 import runpy
 import sys
@@ -41,7 +42,7 @@ def verify_tree(root: Path, manifest_sha: str) -> None:
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if args not in ([], ["--verify"]):
+    if args not in ([], ["--verify"], ["--gui-acceptance"]):
         print("Fictional application denied: unsupported command", file=sys.stderr)
         return 2
     if not getattr(sys, "frozen", False):
@@ -57,6 +58,13 @@ def main(argv=None) -> int:
         print("Fictional self-contained package integrity: PASS")
         return 0
     sys.path.insert(0, str(root))
+    if args == ["--gui-acceptance"]:
+        # Test-only gate; a build cannot turn this into production authority.
+        if os.environ.get("MTL_FICTIONAL_CI_ACCEPTANCE") != "1":
+            print("Fictional GUI self-test not enabled", file=sys.stderr)
+            return 2
+        from tools.frozen_gui_acceptance import run
+        return run(root)
     sys.argv = [str(root / "start_pilot.py"), "--gui"]
     try:
         runpy.run_path(str(root / "start_pilot.py"), run_name="__main__")

@@ -42,6 +42,21 @@ class FrozenPilotPrebuildAcceptance(unittest.TestCase):
                         file.write_bytes(original)
             verify_tree(root, digest)
 
+    def test_frozen_gui_acceptance_requires_explicit_nonproduction_flag(self):
+        from tools.frozen_pilot_bootstrap import main
+        with (patch("sys.frozen", True, create=True),
+              patch("sys._MEIPASS", "/not-an-approved-package", create=True)):
+            self.assertEqual(main(["--gui-acceptance"]), 2)
+
+    def test_builder_must_run_frozen_gui_and_tamper_denials(self):
+        from tools.build_self_contained_pilot import build
+        import inspect
+        source = inspect.getsource(build)
+        self.assertIn("--gui-acceptance", source)
+        self.assertIn("FROZEN", __import__(
+            "tools.frozen_gui_acceptance", fromlist=["run"]).__doc__.upper())
+        self.assertIn("Frozen tampered package accepted", source)
+
     def test_archive_rejects_restricted_and_extra_source(self):
         with TemporaryDirectory() as tmp:
             folder = Path(tmp)
