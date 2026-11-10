@@ -250,7 +250,8 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         form=forms[0]
         self.assertIn('Fictional research source',form.title())
         widgets=descendants(form)
-        self.assertEqual(sum(isinstance(x,ttk.Entry) for x in widgets),3)
+        self.assertEqual(sum(isinstance(x,ttk.Entry) for x in widgets),2)
+        self.assertEqual(sum(isinstance(x,tk.Text) for x in widgets),1)
         cancel=next(x for x in widgets
                     if isinstance(x,ttk.Button) and x.cget('text')=='Cancel')
         cancel.invoke()
@@ -258,6 +259,98 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertFalse(form.winfo_exists())
         self.assertTrue(self.core.verify_audit())
 
+
+
+    def test_real_multiline_research_source_and_observation_save(self):
+        self.open(self.author)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        with patch.object(messagebox,'askyesno',return_value=True):
+            research.invoke(0)
+            self.root.update()
+            dialog=next(x for x in self.root.winfo_children()
+                        if isinstance(x,tk.Toplevel))
+            entries=[x for x in descendants(dialog) if isinstance(x,ttk.Entry)]
+            paragraphs=[x for x in descendants(dialog) if isinstance(x,tk.Text)]
+            self.assertEqual((len(entries),len(paragraphs)),(2,1))
+            entries[0].insert(0,'Fictional multiline exhibit')
+            entries[1].insert(0,'https://example.org/fictional-exhibit')
+            excerpt='First imaginary paragraph.\\nSecond imaginary paragraph.'
+            paragraphs[0].insert('1.0',excerpt)
+            save=next(x for x in descendants(dialog)
+                      if isinstance(x,ttk.Button)
+                      and x.cget('text')=='Save manual entry')
+            save.invoke()
+            self.root.update()
+            self.assertFalse(dialog.winfo_exists())
+            row=self.core.db.execute(
+                'SELECT id,excerpt FROM research_evidence '
+                'WHERE matter_id=? AND title=?',
+                (self.mid,'Fictional multiline exhibit')
+            ).fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(row['excerpt'],excerpt)
+            research.invoke(1)
+            self.root.update()
+            observation=next(x for x in self.root.winfo_children()
+                             if isinstance(x,tk.Toplevel))
+            selectors=[x for x in descendants(observation)
+                       if isinstance(x,ttk.Combobox)]
+            bodies=[x for x in descendants(observation)
+                    if isinstance(x,tk.Text)]
+            self.assertEqual((len(selectors),len(bodies)),(1,2))
+            from src.local_operator_gui import LocalOperatorController
+            from src.durable_local_write_fence import LocalWriteFence
+            ctrl=LocalOperatorController(self.core,self.author,
+                durable_fence=LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3'))
+            ctrl.list_matters()
+            matter_index=next(i for i,m in enumerate(ctrl.operator.matters(self.author)['matters'])
+                             if m['matter_id']==self.mid)
+            ctrl.select(matter_index)
+            ids=ctrl.available_research_sources()
+            selectors[0].current(ids.index(row['id']))
+            captured='Manual line one.\\nManual line two.'
+            note='First fictional observation.\\nSecond human-entered note.'
+            bodies[0].insert('1.0',captured)
+            bodies[1].insert('1.0',note)
+            save_observation=next(x for x in descendants(observation)
+                                  if isinstance(x,ttk.Button)
+                                  and x.cget('text')=='Save manual entry')
+            save_observation.invoke()
+            self.root.update()
+            self.assertFalse(observation.winfo_exists())
+        found=self.core.db.execute(
+             'SELECT captured_text,note FROM source_observation '
+             'WHERE evidence_id=?',(row['id'],)).fetchone()
+        self.assertIsNotNone(found)
+        self.assertEqual(found['captured_text'],captured)
+        self.assertEqual(found['note'],note)
+        self.assertTrue(self.core.verify_audit())
+        from src.durable_local_write_fence import LocalWriteFence
+        self.assertFalse(LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3').is_pending())
+
+    def test_unsubmitted_multiline_research_draft_purged_on_hide(self):
+        self.open(self.author)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        before=self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.evidence_add'"
+        ).fetchone()[0]
+        research.invoke(0)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        text=next(x for x in descendants(dialog) if isinstance(x,tk.Text))
+        text.insert('1.0','PRIVATE DRAFT LINE ONE\\nPRIVATE DRAFT LINE TWO')
+        self.root.withdraw()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.evidence_add'"
+        ).fetchone()[0],before)
+        self.assertTrue(self.core.verify_audit())
 
     def test_native_reviewer_access_dialog_opens_only_for_owner(self):
         self.open(self.author)
