@@ -50,6 +50,23 @@ actual = {str(p.relative_to(BASE)).replace('\\', '/')
           for p in (BASE / 'src').iterdir() if p.is_file()}
 if actual != set(expected):
     raise SystemExit('Pilot integrity denied: unexpected source content')
+# Packaging helpers must be checked too. Earlier packages checked only src/*.py,
+# allowing changes to start_pilot.py and OS launch scripts without rejection.
+required_assets = {
+    'run_pilot.py', 'start_pilot.py', 'README.txt',
+    'launch-windows.cmd', 'launch-macos.command', 'launch-linux.sh',
+    'Open-Practice-Windows.cmd', 'Open-Practice-macOS.command',
+    'Open-Practice-Linux.sh',
+}
+asset_hashes = manifest.get('asset_sha256')
+if not isinstance(asset_hashes, dict) or set(asset_hashes) != required_assets:
+    raise SystemExit('Pilot integrity denied: missing or unexpected asset hashes')
+for name, digest in sorted(asset_hashes.items()):
+    file = BASE / name
+    if file.is_symlink() or not file.is_file():
+        raise SystemExit('Pilot integrity denied: missing or linked package asset')
+    if hashlib.sha256(file.read_bytes()).hexdigest() != digest:
+        raise SystemExit('Pilot integrity denied: packaged launcher or asset changed')
 print('FICTIONAL OFFLINE PREVIEW; not for real legal work', file=sys.stderr)
 if len(sys.argv) == 2 and sys.argv[1] == '--verify':
     print('Local pilot package SHA-256 check: PASS')
@@ -177,6 +194,15 @@ def build(output: Path) -> dict:
                  'original 42-file release gate or independent review.\n'
               ).encode('utf-8'),
               **source}
+    # Hash the executable entrypoints and launchers, not just src modules.
+    # Do not hash MANIFEST.json itself (its bytes contain this mapping).
+    manifest['asset_sha256'] = {
+        name: sha256(data).hexdigest()
+        for name, data in sorted(assets.items())
+        if name != 'MANIFEST.json' and name not in source
+    }
+    assets['MANIFEST.json'] = (
+        json.dumps(manifest, sort_keys=True, indent=2) + '\n').encode('utf-8')
     # Exclusive creation protects an existing package. No user state or
     # credentials are ever included; timestamps are deterministic.
     with output.open('xb') as handle:
