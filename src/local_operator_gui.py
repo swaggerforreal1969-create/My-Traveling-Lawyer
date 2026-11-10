@@ -241,6 +241,32 @@ class LocalOperatorController:
                 'SELECT id FROM users WHERE firm_id=? AND active=1 AND id<>? ORDER BY id',
                 (actor['firm_id'],actor['id'])).fetchall())
 
+    def named_second_reviewer_choices(self):
+        """Owner-only names with exact ID binding; deny ambiguous duplicate names.
+
+        Human selection must identify a real colleague, not 'Staff 1'.
+        Names live only in the private dialog, never status/log output.
+        """
+        ids = self.eligible_second_reviewers()
+        if len(ids) > 100:
+            raise Invalid('Too many staff members for private selection')
+        core = self.operator.core
+        with core.lock:
+            actor = core._identity(self._token)
+            core._role(actor, self._matter_id, ('owner',))
+            rows = core.db.execute(
+                'SELECT id,name FROM users WHERE firm_id=? AND active=1 '
+                'AND id<>? ORDER BY id', (actor['firm_id'], actor['id'])
+            ).fetchall()
+            choices = tuple((row['id'], row['name']) for row in rows)
+            if tuple(x[0] for x in choices) != ids:
+                raise Stale('Eligible staff changed during selection')
+            labels = [x[1].strip() for x in choices]
+            if (any(not label or len(label) > 120 for label in labels)
+                    or len(set(labels)) != len(labels)):
+                raise Denied('Ambiguous staff names; resolve before access grant')
+            return choices
+
     def allow_second_reviewer(self, user_id, expected_version, confirmed):
         """Explicit owner-authorized editor grant; never an automatic grant."""
         if not confirmed:
@@ -1300,7 +1326,8 @@ def launch_gui(core, token, *, run_mainloop=True):
             status.set('Unresolved write or confirmation active. No permission change.')
             return
         try:
-            users=controller.eligible_second_reviewers()
+            named=controller.named_second_reviewer_choices()
+            users=tuple(x[0] for x in named)
             actor=core._identity(controller._token)
             revision=core._role(actor,controller._matter_id,('owner',))['version']
         except (Denied,Invalid,Stale):
@@ -1319,7 +1346,7 @@ def launch_gui(core, token, *, run_mainloop=True):
                   'This grants edit/review access to this matter only.',
                   wraplength=360).pack(anchor='w')
         choices=ttk.Combobox(form,state='readonly',
-            values=tuple('Staff '+str(i+1) for i in range(len(users))))
+            values=tuple(label for _,label in named))
         choices.current(0)
         choices.pack(fill='x')
         original_matter=controller._matter_id
@@ -1328,15 +1355,25 @@ def launch_gui(core, token, *, run_mainloop=True):
                 return
             write_confirmation['active']=True
             try:
-                if not messagebox.askyesno('Confirm reviewer access',
-                    'Allow this fictional staff member to edit and review '
-                    'the selected matter?',parent=dialog):
-                    return
                 idx=choices.current()
                 if (controller._matter_id!=original_matter or
                     idx<0 or idx>=len(users) or
-                    users!=controller.eligible_second_reviewers()):
-                    raise Stale('Matter or staff list changed')
+                    named!=controller.named_second_reviewer_choices() or
+                    choices.get()!=named[idx][1]):
+                    raise Stale('Matter or identified colleague changed')
+                if not messagebox.askyesno('Confirm reviewer access',
+                    'Allow ' + named[idx][1] + ' to EDIT and REVIEW this '
+                    'fictional matter? They will be able to change matter '
+                    'tasks and research. This is not read-only access.',
+                    parent=dialog):
+                    return
+                # Tk's confirmation dialog can run nested events. Compare the
+                # exact staff ID/name and matter after it closes, before write.
+                if (controller._matter_id!=original_matter or
+                    idx!=choices.current() or
+                    named!=controller.named_second_reviewer_choices() or
+                    choices.get()!=named[idx][1]):
+                    raise Stale('Reviewer changed during confirmation')
                 result=controller.allow_second_reviewer(
                     users[idx],revision,True)
                 dialog.destroy()
