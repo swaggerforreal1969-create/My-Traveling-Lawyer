@@ -334,6 +334,10 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check "pyinstaller==6.22.3"
           python tools/build_self_contained_pilot.py --output mtl-frozen-fictional
+      - name: Verify safe fictional versioned installation and recovery
+        run: |
+          python -m unittest discover -s tests -p test_fictional_install.py -v
+          python tools/qualify_fictional_install.py --source mtl-frozen-fictional
       - name: Build reproducible experimental preview archive
         run: python tools/build_offline_pilot_preview.py --output mtl-fictional-preview.zip
       - name: Retain private experimental ZIP for inspection (Linux only)
