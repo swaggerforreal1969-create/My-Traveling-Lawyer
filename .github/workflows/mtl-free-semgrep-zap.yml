@@ -1,0 +1,88 @@
+name: MTL free Semgrep and ZAP boundary (nonproduction)
+on:
+  push:
+    branches: [engineering/free-semgrep-zap-boundary-20261110]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  semgrep-local:
+    name: Free Semgrep CLI, local rules, metrics OFF
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Exact source and protected-original scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SEMGR_SOURCE_SHA=$(git rev-parse HEAD)"
+          test ! -e src/secure_server.py
+          test ! -e src/index.html
+          test ! -e src/app.js
+          test ! -e src/secure_app.js
+          test ! -e src/secure_index.html
+          test -f .security/semgrep-free-rules.yml
+      - name: Install free Semgrep OSS CLI, without platform login
+        shell: bash
+        run: python -m pip install --disable-pip-version-check 'semgrep>=1.100,<2'
+      - name: Scan authorized source without metrics or upload
+        shell: bash
+        env:
+          SEMGREP_SEND_METRICS: 'off'
+          SEMGREP_ENABLE_VERSION_CHECK: '0'
+        run: |
+          set -euo pipefail
+          semgrep scan --config .security/semgrep-free-rules.yml --metrics off --json \
+            --output "$RUNNER_TEMP/semgrep-full.json" src tests tools
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          full=json.loads((Path(os.environ['RUNNER_TEMP'])/'semgrep-full.json').read_text())
+          if full.get('errors'):
+              raise SystemExit('SEMGREP_SCAN_ERRORS: '+str(len(full['errors'])))
+          records=[]
+          for x in full.get('results',[]):
+              records.append({'rule':x['check_id'],'path':x['path'],'line':x['start']['line'],
+                              'severity':x.get('extra',{}).get('severity','UNKNOWN')})
+          summary={'sha':os.environ.get('GITHUB_SHA',''),'scan':'Semgrep OSS custom local rules metrics off',
+                   'scope':'Only already-published src tests tools; no restricted originals',
+                   'rules':7,'findings_count':len(records),'findings':records,
+                   'status':'TRIAGE ONLY — not independent security approval'}
+          Path('semgrep-local-summary.json').write_text(json.dumps(summary,indent=2))
+          print('SEMGREP_EXACT_SHA='+summary['sha'])
+          print('SEMGREP_LOCAL_RULES='+str(summary['rules']))
+          print('SEMGREP_FINDINGS='+str(len(records)))
+          for item in records[:30]:
+              print('{rule} {path}:{line} {severity}'.format(**item))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtl-free-semgrep-summary-no-source
+          path: semgrep-local-summary.json
+          retention-days: 3
+          if-no-files-found: error
+  zap-boundary:
+    name: OWASP ZAP passive preflight (no supported HTTP app)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Block scanning unless genuine fictional HTTP app exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test ! -f src/secure_server.py; then
+            echo 'ZAP NOT RUN: supported authenticated web entrypoint is one of 10 restricted originals.'
+          else
+            echo 'ZAP NOT RUN: supported HTTP server source exists but no approved fictional instance is running.'
+          fi
+          echo 'Desktop Tk pilot has no HTTP transport, so ZAP cannot test the GUI.'
+          echo 'GATED: tools/zap_local_baseline.py requires explicit fictional-only authorization, loopback target and matching service header.'
