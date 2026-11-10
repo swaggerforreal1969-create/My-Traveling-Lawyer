@@ -17,6 +17,12 @@ WARNING = "FICTIONAL OFFLINE PILOT ONLY - NEVER USE REAL CLIENT DATA"
 
 def checked_command(*args: str) -> int:
     """Invoke the local verified runner without a shell or secret arguments."""
+    if getattr(sys, "frozen", False):
+        # In a PyInstaller onedir app sys.executable is the fictional app,
+        # not Python. Only a verification subprocess is allowed here.
+        if args != ("--verify",):
+            return 2
+        return subprocess.call([sys.executable, "--verify"], cwd=str(BASE))
     return subprocess.call([sys.executable, str(RUNNER), *args], cwd=str(BASE))
 
 
