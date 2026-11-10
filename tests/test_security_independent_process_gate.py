@@ -90,6 +90,35 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
             "SELECT completed,version FROM tasks WHERE id=?", (task["id"],)).fetchone()
         self.assertEqual((row["completed"], row["version"]), (0, 1))
 
+    def test_cross_process_downgrade_during_note_admission_must_deny_write(self):
+        """Inject independent ACL downgrade just after editor's role check.
+
+        Autocommit connections must not allow this stale permission to write.
+        The child is a genuine second Python process and SQLite connection.
+        """
+        old_role = self.core._role
+        seen = [False]
+        def checked_then_revoked(identity, matter_id, allowed):
+            result = old_role(identity, matter_id, allowed)
+            if not seen[0] and identity["id"] == self.editor_id:
+                seen[0] = True
+                self.child(
+                    "import sys; from src.secure_engine import SecureCore; "
+                    "c=SecureCore(sys.argv[1]); "
+                    "c.grant(sys.argv[2],sys.argv[3],sys.argv[4],'viewer',int(sys.argv[5])); "
+                    "c.close(); print('PASS')",
+                    self.owner, self.matter["id"], self.editor_id, 2)
+            return result
+        self.core._role = checked_then_revoked
+        try:
+            with self.assertRaises(Denied):
+                self.core.add_note(self.editor, self.matter["id"], "MUST NOT COMMIT")
+        finally:
+            self.core._role = old_role
+        self.assertTrue(seen[0], "No cross-process revocation was exercised")
+        self.assertEqual(self.core.read_notes(self.owner, self.matter["id"]), [])
+
+
     def test_audit_row_deletion_is_detected(self):
         self.core.add_note(self.owner, self.matter["id"], "FICTIONAL FIRST")
         self.core.add_note(self.owner, self.matter["id"], "FICTIONAL SECOND")
