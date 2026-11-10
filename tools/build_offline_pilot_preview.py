@@ -50,6 +50,23 @@ actual = {str(p.relative_to(BASE)).replace('\\', '/')
           for p in (BASE / 'src').iterdir() if p.is_file()}
 if actual != set(expected):
     raise SystemExit('Pilot integrity denied: unexpected source content')
+# Packaging helpers must be checked too. Earlier packages checked only src/*.py,
+# allowing changes to start_pilot.py and OS launch scripts without rejection.
+required_assets = {
+    'run_pilot.py', 'start_pilot.py', 'README.txt',
+    'launch-windows.cmd', 'launch-macos.command', 'launch-linux.sh',
+    'Open-Practice-Windows.cmd', 'Open-Practice-macOS.command',
+    'Open-Practice-Linux.sh',
+}
+asset_hashes = manifest.get('asset_sha256')
+if not isinstance(asset_hashes, dict) or set(asset_hashes) != required_assets:
+    raise SystemExit('Pilot integrity denied: missing or unexpected asset hashes')
+for name, digest in sorted(asset_hashes.items()):
+    file = BASE / name
+    if file.is_symlink() or not file.is_file():
+        raise SystemExit('Pilot integrity denied: missing or linked package asset')
+    if hashlib.sha256(file.read_bytes()).hexdigest() != digest:
+        raise SystemExit('Pilot integrity denied: packaged launcher or asset changed')
 print('FICTIONAL OFFLINE PREVIEW; not for real legal work', file=sys.stderr)
 if len(sys.argv) == 2 and sys.argv[1] == '--verify':
     print('Local pilot package SHA-256 check: PASS')
@@ -109,8 +126,12 @@ cd /d "%~dp0"
 echo FICTIONAL OFFLINE PILOT ONLY - NEVER USE REAL CLIENT DATA
 where py >nul 2>nul
 if %errorlevel%==0 (
+    py -3 run_pilot.py --verify
+    if errorlevel 1 exit /b 2
     py -3 start_pilot.py
 ) else (
+    python run_pilot.py --verify
+    if errorlevel 1 exit /b 2
     python start_pilot.py
 )
 set "pilot_exit=%errorlevel%"
@@ -124,12 +145,17 @@ POSIX_START = """#!/bin/sh
 # Fictional-only local pilot. No downloads, network services or privileges.
 cd -- "$(dirname -- "$0")" || exit 2
 printf '%s\\n' 'FICTIONAL OFFLINE PILOT ONLY - NEVER USE REAL CLIENT DATA'
+python3 run_pilot.py --verify || exit 2
 python3 start_pilot.py
 result=$?
 printf '%s\\n' 'Pilot closed. Press Enter to close this window.'
 IFS= read -r _unused || true
 exit "$result"
 """
+
+WINDOWS_VISUAL_START = WINDOWS_START.replace('start_pilot.py', 'start_pilot.py --gui')
+POSIX_VISUAL_START = POSIX_START.replace('start_pilot.py', 'start_pilot.py --gui')
+
 
 def build(output: Path) -> dict:
     output = Path(output)
@@ -144,6 +170,9 @@ def build(output: Path) -> dict:
                 'independent_security_approval': False,
                 'production_use': False}
     assets = {'launch-windows.cmd': WINDOWS_START.encode('utf-8'),
+              'Open-Practice-Windows.cmd': WINDOWS_VISUAL_START.encode('utf-8'),
+              'Open-Practice-macOS.command': POSIX_VISUAL_START.encode('utf-8'),
+              'Open-Practice-Linux.sh': POSIX_VISUAL_START.encode('utf-8'),
               'launch-macos.command': POSIX_START.encode('utf-8'),
               'launch-linux.sh': POSIX_START.encode('utf-8'),
               'run_pilot.py': LAUNCHER.encode('utf-8'),
@@ -154,10 +183,14 @@ def build(output: Path) -> dict:
                  'Python 3.11+ and working Tk installation required.\n'
                  'Extract the ZIP locally, do not run it within the archive.\n'
                  'Check integrity: python run_pilot.py --verify\n'
-                 'Interactive start: python start_pilot.py\n'
-                 'Windows: double-click launch-windows.cmd (requires Python and Tk).\n'
-                 'macOS: open launch-macos.command (requires Python 3.11+ and Tk).\n'
-                 'Linux: sh launch-linux.sh (requires Python 3.11+ and Tk).\n'
+                 'Graphical practice setup and reopening:\n'
+                 'Windows: double-click Open-Practice-Windows.cmd (requires Python and Tk).\n'
+                 'macOS: open Open-Practice-macOS.command (requires Python 3.11+ and Tk).\n'
+                 'Linux: sh Open-Practice-Linux.sh (requires Python 3.11+ and Tk).\n'
+                 'Select Create NEW for a new practice file, or Open SAVED to reopen.\n'
+                 'Save the access codes at creation; existing files are never overwritten.\n'
+                 'Console fallback: python start_pilot.py\n'
+                 'Legacy launchers: launch-windows.cmd, launch-macos.command, launch-linux.sh.\n'
                  'Setup: python run_pilot.py init --database new-fictional.sqlite3\n'
                  'Open: python run_pilot.py open --database new-fictional.sqlite3\n'
                  'Token is entered hidden; keep it out of logs and chats.\n'
@@ -166,6 +199,15 @@ def build(output: Path) -> dict:
                  'original 42-file release gate or independent review.\n'
               ).encode('utf-8'),
               **source}
+    # Hash the executable entrypoints and launchers, not just src modules.
+    # Do not hash MANIFEST.json itself (its bytes contain this mapping).
+    manifest['asset_sha256'] = {
+        name: sha256(data).hexdigest()
+        for name, data in sorted(assets.items())
+        if name != 'MANIFEST.json' and name not in source
+    }
+    assets['MANIFEST.json'] = (
+        json.dumps(manifest, sort_keys=True, indent=2) + '\n').encode('utf-8')
     # Exclusive creation protects an existing package. No user state or
     # credentials are ever included; timestamps are deterministic.
     with output.open('xb') as handle:
