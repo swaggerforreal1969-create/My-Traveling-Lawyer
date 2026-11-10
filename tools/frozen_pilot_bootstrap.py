@@ -112,7 +112,9 @@ def frozen_gui_acceptance(package: Path) -> int:
                 buttons["Select matter"].invoke()
                 window.update()
                 if stage == 0:
-                    check(lists[1].size() == 1 and lists[2].size() == 1)
+                    # The author may see their task but must not self-review
+                    # the observation that they wrote.
+                    check(lists[1].size() == 0 and lists[2].size() == 1)
                 elif stage == 1:
                     check(lists[1].size() == 1 and lists[2].size() == 1)
                     lists[1].selection_set(0)
