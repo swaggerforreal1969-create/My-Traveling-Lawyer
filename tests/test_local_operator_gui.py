@@ -283,6 +283,38 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
             owner.allow_second_reviewer(self.viewer_id,row['version']-1,True)
         self.assertFalse(LocalWriteFence(path).is_pending())
 
+
+    def test_source_post_clearance_display_failure_reports_verified_not_locked(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        actor=LocalOperatorController(self.core,self.author,
+                                     durable_fence=LocalWriteFence(path))
+        actor.list_matters()
+        actor.select(0)
+        with patch.object(actor,'_load_authorized_work',
+                          side_effect=RuntimeError('display lost')):
+            result=actor.add_research_source('Fictional source',
+                       'https://example.org/manual',
+                       'Imaginary hand-copied excerpt',True)
+        self.assertEqual(result.status,'saved_display_unavailable')
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        self.assertEqual(self.audit_count('research.evidence_add'),2)
+
+    def test_reviewer_post_clearance_display_failure_never_claims_pending_fence(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        owner=LocalOperatorController(self.core,self.author,
+                                     durable_fence=LocalWriteFence(path))
+        owner.list_matters()
+        owner.select(0)
+        rev=self.core._role(self.core._identity(self.author),self.mid,('owner',))['version']
+        with patch.object(owner,'_load_authorized_work',
+                          side_effect=RuntimeError('display unavailable')):
+            result=owner.allow_second_reviewer(self.reviewer_id,rev,True)
+        self.assertEqual(result.status,'saved_display_unavailable')
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        self.assertTrue(self.core.verify_audit())
+
     def test_full_graphical_controller_journey(self):
         cl=self.select()
         self.assertEqual(cl.counts(),(1,1))
