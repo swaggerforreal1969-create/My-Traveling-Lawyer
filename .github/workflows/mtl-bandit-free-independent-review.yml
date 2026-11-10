@@ -1,0 +1,80 @@
+name: MTL independent free Bandit automated security review (nonproduction)
+on:
+  push:
+    branches: [engineering/free-bandit-independent-software-review-20261110]
+permissions:
+  contents: read
+jobs:
+  bandit-source-review:
+    name: Independent Bandit Python security scan, no vendor upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Exact source and missing-original boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SCAN_EXACT_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test ! -e src/secure_server.py
+          test ! -e src/app.js
+          test ! -e src/secure_app.js
+          test ! -e src/secure_index.html
+          test ! -e tests/test_engine.py
+      - name: Install free PyCQA Bandit without SaaS authentication
+        shell: bash
+        run: python -m pip install --disable-pip-version-check 'bandit>=1.8,<2'
+      - name: Run complete local Bandit ruleset on authorized Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          bandit -r src tests tools -f json -o "$RUNNER_TEMP/bandit-private-full.json" -q
+          scan_rc=$?
+          set -e
+          if [ "$scan_rc" -gt 1 ]; then
+            echo "BANDIT_ENGINE_FAILURE=$scan_rc"
+            exit "$scan_rc"
+          fi
+          python - <<'PY'
+          import json, os
+          from collections import Counter
+          from pathlib import Path
+          file=Path(os.environ['RUNNER_TEMP'])/'bandit-private-full.json'
+          report=json.loads(file.read_text(encoding='utf-8'))
+          issues=report.get('results')
+          if not isinstance(issues,list):
+              raise SystemExit('Bandit JSON report missing results')
+          counts=dict(sorted(Counter(i.get('issue_severity','UNKNOWN') for i in issues).items()))
+          confidence=dict(sorted(Counter(i.get('issue_confidence','UNKNOWN') for i in issues).items()))
+          items=[{'id':i.get('test_id'),'severity':i.get('issue_severity'),
+                  'confidence':i.get('issue_confidence'),
+                  'file':i.get('filename','').split('/My-Traveling-Lawyer/')[-1],
+                  'line':i.get('line_number')}
+                 for i in issues]
+          output={'repository':'My-Traveling-Lawyer','source_sha':os.environ['GITHUB_SHA'],
+                  'engine':'PyCQA Bandit OSS','findings_total':len(items),
+                  'severity_counts':counts,'confidence_counts':confidence,
+                  'items':items,'coverage':'Authorized Python under src tests tools; ten restricted originals absent',
+                  'decision':'automated triage only, not human clearance or release approval',
+                  'source_uploaded_to_vendor':False}
+          Path('bandit-independent-review-summary.json').write_text(json.dumps(output,indent=2))
+          print('BANDIT_SHA='+output['source_sha'])
+          print('BANDIT_FINDINGS_TOTAL='+str(len(items)))
+          print('BANDIT_SEVERITY_COUNTS='+str(counts))
+          for row in items[:70]:
+              print(f"{row['id']} {row['severity']} {row['confidence']} {row['file']}:{row['line']}")
+          PY
+      - name: Retain finding metadata only (no source code)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtl-bandit-independent-software-review-no-source
+          path: bandit-independent-review-summary.json
+          retention-days: 3
+          if-no-files-found: error
