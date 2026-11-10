@@ -864,6 +864,68 @@ def launch_gui(core, token, *, run_mainloop=True):
         portfolio_text.insert('1.0', summary)
         portfolio_text.configure(state='disabled')
 
+    def show_matter_brief():
+        """Human-readable confidential matter briefing; never saves or exports."""
+        if controller._matter_id is None:
+            status.set('Select a matter before opening its private brief.')
+            return
+        original_matter = controller._matter_id
+        try:
+            from .matter_brief import MatterBrief
+            report = MatterBrief(core).prepare(controller._token, original_matter)
+            if controller._matter_id != original_matter:
+                raise Stale('Selected matter changed')
+            # This is a private local display, not a safe-to-share export.
+            lines = [
+                'PRIVATE MATTER BRIEF — READ ONLY',
+                'Practice only. Not verified law or court filing approval.',
+                '',
+                'Matter: ' + report['matter_title'],
+                'Open tasks: ' + str(len(report['open_tasks'])),
+                'Research sources: ' + str(len(report['research_sources'])),
+                '',
+                'OPEN TASKS',
+            ]
+            if not report['open_tasks']:
+                lines.append('None')
+            for task in report['open_tasks']:
+                lines.append('- ' + task['text'] + ' | User date: ' +
+                             task['due_at'] + (' | Past user date' if
+                             task['past_user_entered_due_time'] else ''))
+            lines.extend(('', 'RESEARCH — HUMAN CHECK REQUIRED'))
+            if not report['research_sources']:
+                lines.append('None')
+            for source in report['research_sources']:
+                lines.append('- ' + source['title'] + ' | Human check: ' +
+                             source['last_human_assessment'])
+            lines.extend(('', 'PRIVATE NOTES'))
+            if not report['notes']:
+                lines.append('None')
+            for item in report['notes']:
+                lines.append('- ' + item['text'])
+            lines.extend(('', 'IMPORTANT CAUTIONS', *report['risk_notices']))
+            dialog = tk.Toplevel(root)
+            dialog.title('Private matter brief — read only')
+            dialog.transient(root)
+            dialog.geometry('680x520')
+            private_forms.append(dialog)
+            body = ttk.Frame(dialog, padding=10)
+            body.pack(fill='both', expand=True)
+            ttk.Label(body, text='Private matter brief — read only',
+                      font=('TkDefaultFont', 15, 'bold')).pack(anchor='w')
+            ttk.Label(body, text='Do not share this screen. No filing or legal deadline is verified.',
+                      wraplength=580).pack(anchor='w')
+            area = tk.Text(body, wrap='word', takefocus=True)
+            area.pack(fill='both', expand=True, pady=(8, 6))
+            area.insert('1.0', '\\n'.join(lines))
+            area.configure(state='disabled')
+            ttk.Button(body, text='Close brief', command=dialog.destroy).pack(anchor='e')
+            area.focus_set()
+            status.set('Private matter brief opened read only; no files saved.')
+        except (Denied, Invalid, Stale, EvidenceInvalid, ValueError, KeyError):
+            clear_all_visible_work()
+            status.set('Matter brief denied or changed. Reauthenticate.')
+
     def show_portfolio():
         # Never leave stale aggregate counts visible after failed authorization.
         clear_all_visible_work()
@@ -1472,6 +1534,7 @@ def launch_gui(core, token, *, run_mainloop=True):
         command=lambda: research_entry('observation'))
     root_menu.add_cascade(label='Research',menu=research_menu)
     root_menu.add_command(label='Allow second reviewer',command=allow_second_review_dialog)
+    root_menu.add_command(label='Matter brief (read only)',command=show_matter_brief)
 
     portfolio_button = ttk.Button(buttons,text='Workload (read only)',
                                   command=show_portfolio)
@@ -1505,6 +1568,7 @@ def launch_gui(core, token, *, run_mainloop=True):
     root.bind('<Alt-f>', lambda event: display_counts()
               if str(refresh_button.cget('state')) != 'disabled' else None)
     root.bind('<Alt-p>', lambda event: show_portfolio())
+    root.open_private_brief = show_matter_brief  # native acceptance hook
     matter_list.bind('<Return>', lambda event: select_matter())
     refresh_lists()
     update_controls()
