@@ -16,8 +16,10 @@ class InstallerWindowTests(unittest.TestCase):
         self.root.update()
 
     def tearDown(self):
-        if self.root.winfo_exists():
+        try:
             self.root.destroy()
+        except tk.TclError:
+            pass
 
     def test_cancel_does_not_call_staging(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -28,7 +30,7 @@ class InstallerWindowTests(unittest.TestCase):
             self.panel.destination.set(str(dest))
             self.panel.confirm.set(True)
             self.panel._refresh()
-            self.assertEqual(self.panel.install["state"], "normal")
+            self.assertNotIn("disabled", self.panel.install.state())
             with patch("tools.fictional_installer_window.stage_version") as staged, \
                  patch("tools.fictional_installer_window.messagebox.askyesno", return_value=False):
                 self.panel.install.invoke()
@@ -47,7 +49,7 @@ class InstallerWindowTests(unittest.TestCase):
             self.panel.source.set(str(src))
             self.panel.destination.set(str(dest))
             self.panel._refresh()
-            self.assertEqual(self.panel.install["state"], "disabled")
+            self.assertIn("disabled", self.panel.install.state())
             self.panel.confirm.set(True)
             self.panel._refresh()
             with patch("tools.fictional_installer_window.stage_version") as staged, \
@@ -85,7 +87,8 @@ class InstallerWindowTests(unittest.TestCase):
         buttons = [w for w in self.panel.root.winfo_children()[0].winfo_children()
                    if isinstance(w, __import__("tkinter.ttk", fromlist=["Button"]).Button)]
         next(w for w in buttons if w.cget("text") == "Cancel").invoke()
-        self.assertFalse(self.root.winfo_exists())
+        with self.assertRaises(tk.TclError):
+            self.root.winfo_exists()
 
 
 if __name__ == "__main__":
