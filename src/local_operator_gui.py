@@ -280,7 +280,13 @@ class LocalOperatorController:
             self._durable_fence.finish_confirmed(
                 expected_reservation=self._reservation)
             self._reservation=None
-            self._load_authorized_work()
+            try:
+                self._load_authorized_work()
+            except Exception:
+                self._tasks,self._reviews=(),()
+                return ActionFeedback('saved_display_unavailable',
+                    'Reviewer access saved and verified, but display refresh failed. '
+                    'Do NOT repeat; reopen read only.')
             return ActionFeedback('reviewer_authorized',
                 'One same-firm reviewer authorized. No source or task was sent.')
         except Exception:
@@ -339,7 +345,13 @@ class LocalOperatorController:
             self._durable_fence.finish_confirmed(
                 expected_reservation=self._reservation)
             self._reservation = None
-            self._load_authorized_work()
+            try:
+                self._load_authorized_work()
+            except Exception:
+                self._tasks,self._reviews=(),()
+                return ActionFeedback('saved_display_unavailable',
+                    'Research saved and verified, but display refresh failed. '
+                    'Do NOT repeat; reopen read only.')
             return ActionFeedback(kind + '_recorded',
                 ('Source' if kind == 'source' else 'Manual observation') +
                 ' saved. Research is NOT verified legal authority.')
