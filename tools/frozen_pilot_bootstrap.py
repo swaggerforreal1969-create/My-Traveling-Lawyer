@@ -208,7 +208,10 @@ def frozen_gui_acceptance(package: Path) -> int:
             filedialog.asksaveasfilename = lambda **kwargs: str(path)
             filedialog.askopenfilename = lambda **kwargs: str(path)
             simpledialog.askstring = saved_code
-            from tools.portable_desktop_start import visual_main
+            # Load the verified packaged entrypoint, not an unbundled tools module.
+            visual_main = runpy.run_path(
+                str(package / "start_pilot.py"),
+                run_name="frozen_gui_acceptance_entry")["visual_main"]
             for stage in range(3):
                 context["stage"] = stage
                 check(visual_main() == 0)
