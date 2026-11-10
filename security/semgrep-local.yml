@@ -1,0 +1,36 @@
+rules:
+  - id: mtl.python-eval
+    languages: [python]
+    severity: ERROR
+    message: Dynamic Python eval requires review; never run untrusted source
+    pattern: eval(...)
+  - id: mtl.python-exec
+    languages: [python]
+    severity: ERROR
+    message: Dynamic Python exec requires review
+    pattern: exec(...)
+  - id: mtl.python-shell-system
+    languages: [python]
+    severity: ERROR
+    message: OS command shell execution requires review
+    pattern: os.system(...)
+  - id: mtl.python-pickle-loads
+    languages: [python]
+    severity: ERROR
+    message: Python pickle deserialization is unsafe with untrusted data
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+  - id: mtl.python-subprocess-shell
+    languages: [python]
+    severity: ERROR
+    message: Shell subprocess requires review and untrusted input denial
+    patterns:
+      - pattern: subprocess.$CALL(..., shell=True, ...)
+  - id: mtl.python-dynamic-sql
+    languages: [python]
+    severity: WARNING
+    message: SQL assembled using dynamic string; verify all components are fixed and trusted
+    pattern-either:
+      - pattern: $DB.execute(f"...")
+      - pattern: $DB.execute("..." + $VALUE)
