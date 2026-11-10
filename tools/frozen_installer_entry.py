@@ -5,8 +5,10 @@ not a user-selected executable. Hash consistency is NOT publisher authenticity.
 """
 from __future__ import annotations
 import hashlib
-import json
 import os
+import tarfile
+import tempfile
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -17,13 +19,75 @@ from tools.fictional_installer_window import FictionalInstallerWindow
 from tools.qualify_fictional_install import executable_at
 
 INVENTORY = {}  # sealed inventory injected only in private build
+ARCHIVE_SHA256 = ""  # archive digest pinned by build
 BUNDLE_DIR = "approved-fictional-app"
 
 
-def payload_root() -> Path:
+def payload_archive() -> Path:
     if not getattr(sys, "frozen", False):
         raise RuntimeError("Installer is for sealed internal executable only")
-    return Path(sys._MEIPASS) / BUNDLE_DIR
+    return Path(sys._MEIPASS) / "installer-data" / "approved-fictional-app.tar"
+
+
+def extract_verified_archive(target: Path) -> Path:
+    """Refuse modified tar and unsafe paths before extracting any file.
+
+    The PyInstaller build must NOT re-sign or reclassify sealed Mach-O binaries.
+    All files are extracted first, then only validated internal symlinks.
+    """
+    archive = payload_archive()
+    if archive.is_symlink() or not archive.is_file():
+        raise RuntimeError("Approved fictional app archive missing")
+    with archive.open("rb") as inp:
+        checksum = hashlib.file_digest(inp, "sha256").hexdigest()
+    if checksum != ARCHIVE_SHA256:
+        raise RuntimeError("Approved fictional app archive changed")
+    target = Path(target)
+    root = target / BUNDLE_DIR
+    root.mkdir(parents=True, exist_ok=False)
+    with tarfile.open(archive, "r:") as tar:
+        members = tar.getmembers()
+        filenames = set()
+        symlinks = []
+        for member in members:
+            relative = Path(member.name)
+            if (relative.is_absolute() or ".." in relative.parts
+                    or not relative.parts or relative.parts[0] != BUNDLE_DIR
+                    or not (member.isfile() or member.isdir() or member.issym())):
+                raise RuntimeError("Unsafe fictional installer archive member")
+            if member.name in filenames:
+                raise RuntimeError("Duplicate fictional installer file")
+            filenames.add(member.name)
+            location = target / relative
+            if not location.resolve(strict=False).is_relative_to(root.resolve()):
+                raise RuntimeError("Fictional installer path escaped")
+            if member.issym():
+                if os.path.isabs(member.linkname):
+                    raise RuntimeError("External symbolic link denied")
+                dest = (location.parent / member.linkname).resolve(strict=False)
+                if not dest.is_relative_to(root.resolve()):
+                    raise RuntimeError("External symbolic link denied")
+                symlinks.append((member, location))
+        for member in members:
+            if member.issym():
+                continue
+            location = target / member.name
+            if member.isdir():
+                location.mkdir(parents=True, exist_ok=True)
+            else:
+                location.parent.mkdir(parents=True, exist_ok=True)
+                source = tar.extractfile(member)
+                if source is None:
+                    raise RuntimeError("Missing fictional archive file contents")
+                with source, location.open("xb") as out:
+                    import shutil
+                    shutil.copyfileobj(source, out)
+                location.chmod(member.mode & 0o777)
+        for member, location in symlinks:
+            location.parent.mkdir(parents=True, exist_ok=True)
+            location.symlink_to(member.linkname)
+    verify_payload(root)
+    return root
 
 
 def verify_payload(path: Path) -> None:
@@ -155,21 +219,21 @@ def main() -> int:
                              ("--verify", "--self-test-installer")):
         return 2
     try:
-        payload = payload_root()
-        verify_payload(payload)
-    except (OSError, RuntimeError):
+        with tempfile.TemporaryDirectory(prefix="fictional-sealed-installer-") as temp:
+            payload = extract_verified_archive(Path(temp))
+            if len(sys.argv) == 2 and sys.argv[1] == "--verify":
+                print("Sealed fictional installer payload: PASS")
+                return 0
+            if len(sys.argv) == 2 and sys.argv[1] == "--self-test-installer":
+                return internal_gui_test(payload)
+            root = tk.Tk()
+            SealedFictionalInstaller(root, payload)
+            root.mainloop()
+            return 0
+    except (OSError, RuntimeError, tarfile.TarError, ValueError):
         print("FICTIONAL INSTALLER DENIED: bundled app is not verified",
               file=sys.stderr)
         return 2
-    if len(sys.argv) == 2 and sys.argv[1] == "--verify":
-        print("Sealed fictional installer payload: PASS")
-        return 0
-    if len(sys.argv) == 2 and sys.argv[1] == "--self-test-installer":
-        return internal_gui_test(payload)
-    root = tk.Tk()
-    SealedFictionalInstaller(root, payload)
-    root.mainloop()
-    return 0
 
 
 if __name__ == "__main__":

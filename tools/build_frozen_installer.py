@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from hashlib import sha256
 import os
+import tarfile
 from pathlib import Path
 import shutil
 import subprocess
@@ -49,11 +50,21 @@ def build(source: Path, output: Path) -> Path:
         stage = Path(tmp)
         template = ENTRY.read_text(encoding="utf-8")
         literal = "INVENTORY = {}  # sealed inventory injected only in private build"
-        if template.count(literal) != 1:
-            raise RuntimeError("Installer inventory placeholder missing")
+        digest_anchor = 'ARCHIVE_SHA256 = ""  # archive digest pinned by build'
+        if template.count(literal) != 1 or template.count(digest_anchor) != 1:
+            raise RuntimeError("Installer seal placeholders missing")
+        # Store native files in an opaque tar data resource: macOS PyInstaller
+        # otherwise reclassifies/re-signs Mach-O files and changes their hashes.
+        payload = stage / "approved-fictional-app.tar"
+        with tarfile.open(payload, "w") as archive:
+            for item in sorted(source.rglob("*")):
+                archive.add(item, arcname="approved-fictional-app/" +
+                            item.relative_to(source).as_posix(), recursive=False)
+        archive_sha = sha256(payload.read_bytes()).hexdigest()
         entry = stage / "sealed_installer_bootstrap.py"
         entry.write_text(
-            template.replace(literal, "INVENTORY = " + repr(inventory)),
+            template.replace(literal, "INVENTORY = " + repr(inventory))
+                    .replace(digest_anchor, "ARCHIVE_SHA256 = " + repr(archive_sha)),
             encoding="utf-8")
         dist = stage / "dist"
         cmd = [
@@ -68,7 +79,7 @@ def build(source: Path, output: Path) -> Path:
             "--hidden-import", "tkinter.messagebox",
             "--hidden-import", "tools.fictional_installer_window",
             "--hidden-import", "tools.qualify_fictional_install",
-            "--add-data", str(source) + os.pathsep + "approved-fictional-app",
+            "--add-data", str(payload) + os.pathsep + "installer-data",
             str(entry),
         ]
         subprocess.run(cmd, check=True, cwd=str(ROOT))
