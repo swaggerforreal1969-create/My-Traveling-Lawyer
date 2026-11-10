@@ -103,14 +103,15 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
             if not observed and identity["id"] == self.editor_id:
                 code = (
                     "import sqlite3,sys; from src.secure_engine import SecureCore; "
-                    "c=SecureCore(sys.argv[1]); c.db.execute('PRAGMA busy_timeout=200'); "
-                    "\ntry:\n "
-                    " c.grant(sys.argv[2],sys.argv[3],sys.argv[4],'viewer',int(sys.argv[5])); "
-                    " print('COMMITTED')\n"
-                    "except sqlite3.OperationalError as err:\n"
-                    " if 'locked' not in str(err).lower(): raise\n"
-                    " print('BUSY')\n"
-                    "finally: c.close()"
+                    "c=None\\ntry:\\n"
+                    " c=SecureCore(sys.argv[1]); c.db.execute('PRAGMA busy_timeout=200')\\n"
+                    " c.grant(sys.argv[2],sys.argv[3],sys.argv[4],'viewer',int(sys.argv[5]))\\n"
+                    " print('COMMITTED')\\n"
+                    "except sqlite3.OperationalError as err:\\n"
+                    " if 'locked' not in str(err).lower(): raise\\n"
+                    " print('BUSY')\\n"
+                    "finally:\\n"
+                    " if c is not None: c.close()"
                 )
                 child = subprocess.run(
                     [sys.executable, "-c", code, str(self.path), self.owner,
