@@ -240,7 +240,7 @@ def frozen_gui_acceptance(package: Path) -> int:
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if args not in ([], ["--verify"], ["--self-test-gui"], ["--self-test-readonly"]):
+    if args not in ([], ["--verify"], ["--self-test-gui"], ["--self-test-readonly"], ["--self-test-build-info"]):
         print("Fictional application denied: unsupported command", file=sys.stderr)
         return 2
     if not getattr(sys, "frozen", False):
@@ -254,6 +254,9 @@ def main(argv=None) -> int:
         return 2
     if args == ["--verify"]:
         print("Fictional self-contained package integrity: PASS")
+        return 0
+    if args == ["--self-test-build-info"]:
+        print("Fictional upgrade build: cross-version-v2")
         return 0
     sys.path.insert(0, str(root))
     if args == ["--self-test-readonly"]:
