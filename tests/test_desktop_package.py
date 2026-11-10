@@ -78,7 +78,7 @@ class PortablePreviewAcceptance(unittest.TestCase):
                 file = root / name
                 original = file.read_bytes()
                 try:
-                    file.write_bytes(original + b'\\n# SYNTHETIC NONEXECUTABLE MUTATION\\n')
+                    file.write_bytes(original + b'\n# SYNTHETIC NONEXECUTABLE MUTATION\n')
                     denied = self.invoke(root, '--verify')
                     self.assertNotEqual(denied.returncode, 0)
                     self.assertIn('Pilot integrity denied', denied.stderr)
@@ -202,7 +202,7 @@ class PortablePreviewAcceptance(unittest.TestCase):
         root = self.extract()
         launcher = root / 'start_pilot.py'
         launcher.write_bytes(launcher.read_bytes() +
-                             b'\\nraise SystemExit("UNEXPECTED_STARTUP_EXECUTION")\\n')
+                             b'\nraise SystemExit("UNEXPECTED_STARTUP_EXECUTION")\n')
         result = subprocess.run(
             ['sh', 'Open-Practice-Linux.sh'], cwd=str(root),
             input='', text=True, capture_output=True, timeout=35)
