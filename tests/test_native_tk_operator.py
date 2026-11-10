@@ -276,7 +276,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
             self.assertEqual((len(entries),len(paragraphs)),(2,1))
             entries[0].insert(0,'Fictional multiline exhibit')
             entries[1].insert(0,'https://example.org/fictional-exhibit')
-            excerpt='First imaginary paragraph.\\nSecond imaginary paragraph.'
+            excerpt='First imaginary paragraph.\nSecond imaginary paragraph.'
             paragraphs[0].insert('1.0',excerpt)
             save=next(x for x in descendants(dialog)
                       if isinstance(x,ttk.Button)
@@ -310,8 +310,8 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
             ctrl.select(matter_index)
             ids=ctrl.available_research_sources()
             selectors[0].current(ids.index(row['id']))
-            captured='Manual line one.\\nManual line two.'
-            note='First fictional observation.\\nSecond human-entered note.'
+            captured='Manual line one.\nManual line two.'
+            note='First fictional observation.\nSecond human-entered note.'
             bodies[0].insert('1.0',captured)
             bodies[1].insert('1.0',note)
             save_observation=next(x for x in descendants(observation)
@@ -343,7 +343,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         dialog=next(x for x in self.root.winfo_children()
                     if isinstance(x,tk.Toplevel))
         text=next(x for x in descendants(dialog) if isinstance(x,tk.Text))
-        text.insert('1.0','PRIVATE DRAFT LINE ONE\\nPRIVATE DRAFT LINE TWO')
+        text.insert('1.0','PRIVATE DRAFT LINE ONE\nPRIVATE DRAFT LINE TWO')
         self.root.withdraw()
         self.root.update()
         self.assertFalse(dialog.winfo_exists())
