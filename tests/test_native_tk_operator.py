@@ -185,6 +185,51 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertTrue(all('PRIVATE FICTIONAL FOLLOW-UP' not in
                             x.get('1.0','end-1c') for x in self.texts))
 
+
+    def test_research_menu_has_explicit_manual_source_and_observation(self):
+        self.open(self.author)
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        self.assertEqual(menu.entrycget(1,'label'),'Research')
+        actions=self.root.nametowidget(menu.entrycget(1,'menu'))
+        self.assertEqual(actions.entrycget(0,'label'),'Add manual source')
+        self.assertEqual(actions.entrycget(1,'label'),'Record manual observation')
+        # First select the existing matter and check the private form.
+        self.select_matter()
+        actions.invoke(0)
+        self.root.update()
+        forms=[x for x in self.root.winfo_children()
+               if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(forms),1)
+        form=forms[0]
+        self.assertIn('Fictional research source',form.title())
+        widgets=descendants(form)
+        self.assertEqual(sum(isinstance(x,ttk.Entry) for x in widgets),3)
+        cancel=next(x for x in widgets
+                    if isinstance(x,ttk.Button) and x.cget('text')=='Cancel')
+        cancel.invoke()
+        self.root.update()
+        self.assertFalse(form.winfo_exists())
+        self.assertTrue(self.core.verify_audit())
+
+
+    def test_native_reviewer_access_dialog_opens_only_for_owner(self):
+        self.open(self.author)
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        self.assertEqual(menu.entrycget(2,'label'),'Allow second reviewer')
+        self.select_matter()
+        menu.invoke(2)
+        self.root.update()
+        forms=[x for x in self.root.winfo_children()
+               if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(forms),1)
+        self.assertEqual(forms[0].title(),'Allow a second reviewer')
+        buttons=[x for x in descendants(forms[0])
+                 if isinstance(x,ttk.Button)]
+        next(x for x in buttons if x.cget('text')=='Cancel').invoke()
+        self.root.update()
+        self.assertFalse(forms[0].winfo_exists())
+        self.assertTrue(self.core.verify_audit())
+
     def test_real_widget_layout_focus_and_enabled_actions(self):
         self.open()
         self.assertGreaterEqual(self.root.winfo_width(), 580)

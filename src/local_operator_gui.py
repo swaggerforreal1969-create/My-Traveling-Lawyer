@@ -227,6 +227,161 @@ class LocalOperatorController:
             raise Invalid('Timezone-aware ISO task date required') from exc
         return self._create_authorized('task', title.strip(), due_at=due_at)
 
+
+
+    def eligible_second_reviewers(self):
+        """Owner-only, firm-scoped staff IDs. GUI displays positions only."""
+        if self._matter_id is None:
+            raise Invalid('Select a matter first')
+        core=self.operator.core
+        with core.lock:
+            actor=core._identity(self._token)
+            core._role(actor,self._matter_id,('owner',))
+            return tuple(row['id'] for row in core.db.execute(
+                'SELECT id FROM users WHERE firm_id=? AND active=1 AND id<>? ORDER BY id',
+                (actor['firm_id'],actor['id'])).fetchall())
+
+    def allow_second_reviewer(self, user_id, expected_version, confirmed):
+        """Explicit owner-authorized editor grant; never an automatic grant."""
+        if not confirmed:
+            return ActionFeedback('cancelled','Cancelled; no change.')
+        self._assert_no_uncertain_review()
+        if self._matter_id is None or self._durable_fence is None:
+            raise Denied('Current authorized matter and durable fence required')
+        if type(expected_version) is not int or expected_version<1:
+            raise Invalid('Invalid matter revision')
+        core=self.operator.core
+        with core.lock:
+            actor=core._identity(self._token)
+            owner=core._role(actor,self._matter_id,('owner',))
+            if owner['version']!=expected_version:
+                raise Stale('Matter version changed')
+            if user_id not in self.eligible_second_reviewers():
+                raise Denied('Reviewer must be active within the same firm')
+            if not core.verify_audit():
+                raise Denied('Audit unavailable')
+        self._reservation=self._durable_fence.begin()
+        self._tasks,self._reviews=(),()
+        try:
+            result=core.grant(self._token,self._matter_id,user_id,
+                              'editor',expected_version)
+            if not core.verify_audit():
+                raise Denied('Grant audit unresolved')
+            # Authorize owner again and require exact revision and scope.
+            actor=core._identity(self._token)
+            latest=core._role(actor,self._matter_id,('owner',))
+            if latest['version']!=result['version']:
+                raise Stale('Grant version not observed')
+            observed=core.db.execute(
+                'SELECT role FROM grants WHERE matter_id=? AND user_id=?',
+                (self._matter_id,user_id)).fetchone()
+            if observed is None or observed['role']!='editor':
+                raise Denied('Second-reviewer access not observed')
+            self._durable_fence.finish_confirmed(
+                expected_reservation=self._reservation)
+            self._reservation=None
+            try:
+                self._load_authorized_work()
+            except Exception:
+                self._tasks,self._reviews=(),()
+                return ActionFeedback('saved_display_unavailable',
+                    'Reviewer access saved and verified, but display refresh failed. '
+                    'Do NOT repeat; reopen read only.')
+            return ActionFeedback('reviewer_authorized',
+                'One same-firm reviewer authorized. No source or task was sent.')
+        except Exception:
+            self._tasks,self._reviews=(),()
+            return ActionFeedback('write_unresolved',
+                'Reviewer access outcome unresolved. Do NOT repeat. '
+                'Local safety lock remains pending.')
+
+    def available_research_sources(self):
+        """Privacy-safe index of authorized manually entered sources."""
+        if self._matter_id is None:
+            raise Invalid('Select a matter before reviewing sources')
+        sources = self.operator.workflow.evidence.list(self._token, self._matter_id)['sources']
+        # IDs stay strictly inside the authenticated controller/dialog.
+        return tuple(entry['id'] for entry in sources)
+
+    def _record_manual_research(self, kind, values):
+        """One human-confirmed research write, one durable reservation.
+
+        Source and observation are separate commits; never retry an uncertain
+        write or pretend both are atomic. A generic pending fence intentionally
+        requires independent human incident handling to clear.
+        """
+        self._assert_no_uncertain_review()
+        if self._matter_id is None or self._durable_fence is None:
+            raise Denied('Authorized matter and durable local fence required')
+        core = self.operator.core
+        with core.lock:
+            actor = core._identity(self._token)
+            core._role(actor, self._matter_id, ('owner','editor'))
+            if not core.verify_audit():
+                raise Denied('Local audit integrity unavailable')
+        self._reservation = self._durable_fence.begin()
+        self._tasks, self._reviews = (), ()
+        try:
+            if kind == 'source':
+                title, url, excerpt = values
+                made = self.operator.workflow.evidence.add(
+                    self._token, self._matter_id, title, url, excerpt)
+                record_id = made['id']
+                entries = self.available_research_sources()
+                if record_id not in entries:
+                    raise Denied('Saved source not visible after authorization')
+            else:
+                source_id, captured, note = values
+                made = self.operator.workflow.observations.capture(
+                    self._token, self._matter_id, source_id, captured, note)
+                record_id = made['observation_id']
+                history = self.operator.workflow.observations.history(
+                    self._token, self._matter_id, source_id)
+                if not any(x['observation_id'] == record_id
+                           for x in history['observations']):
+                    raise Denied('Saved observation not visible after authorization')
+            if not core.verify_audit():
+                raise Denied('Local audit check failed after write')
+            self._durable_fence.finish_confirmed(
+                expected_reservation=self._reservation)
+            self._reservation = None
+            try:
+                self._load_authorized_work()
+            except Exception:
+                self._tasks,self._reviews=(),()
+                return ActionFeedback('saved_display_unavailable',
+                    'Research saved and verified, but display refresh failed. '
+                    'Do NOT repeat; reopen read only.')
+            return ActionFeedback(kind + '_recorded',
+                ('Source' if kind == 'source' else 'Manual observation') +
+                ' saved. Research is NOT verified legal authority.')
+        except Exception:
+            # Unknown post-reservation outcome is never a safe replay invitation.
+            self._tasks, self._reviews = (), ()
+            return ActionFeedback('write_unresolved',
+                'Research save outcome is unresolved. Do NOT repeat. '
+                'The safety lock remains until authorized incident review.')
+
+    def add_research_source(self, title, url, excerpt, confirmed):
+        if not confirmed:
+            return ActionFeedback('cancelled','Cancelled; no write performed.')
+        # Validate before reserving: ordinary typing errors must not lock work.
+        from .research_evidence import ResearchEvidence
+        cleaned = ResearchEvidence.clean(title, url, excerpt)
+        return self._record_manual_research('source', cleaned)
+
+    def record_research_observation(self, source_id, captured, note, confirmed):
+        if not confirmed:
+            return ActionFeedback('cancelled','Cancelled; no write performed.')
+        if not isinstance(captured,str) or not 1 <= len(captured.strip()) <= 12000:
+            raise Invalid('Manual observation text required')
+        if not isinstance(note,str) or not 12 <= len(note.strip()) <= 1200:
+            raise Invalid('Manual observation note must be 12–1200 characters')
+        if source_id not in self.available_research_sources():
+            raise Denied('Source is not in currently authorized matter')
+        return self._record_manual_research(
+            'observation', (source_id, captured.strip(), note.strip()))
+
     def review(self, position, decision, note, confirmed):
         if not confirmed:
             return ActionFeedback('cancelled', 'Cancelled; no write performed.')
@@ -554,6 +709,7 @@ def launch_gui(core, token, *, run_mainloop=True):
     controller = LocalOperatorController(
         core, token, durable_fence=LocalWriteFence(db_path) if db_path else None)
     root = tk.Tk()
+    private_forms = []  # confidential transient entry forms owned by this window
     root.title('Private Attorney — Local Operator')
     root.geometry('760x650')
     root.minsize(580, 520)
@@ -614,6 +770,14 @@ def launch_gui(core, token, *, run_mainloop=True):
         portfolio_text.configure(state='disabled')
 
     def clear_all_visible_work():
+        # Close confidential unsubmitted forms when access/window is hidden.
+        for private_form in private_forms[:]:
+            try:
+                if private_form.winfo_exists():
+                    private_form.destroy()
+            except tk.TclError:
+                pass
+        private_forms[:] = [p for p in private_forms if p.winfo_exists()]
         # A human review draft is private even before it is committed.
         # Never retain it through logout, revoked access, failed refresh,
         # navigation to the portfolio, or a hidden/minimized window.
@@ -1038,6 +1202,169 @@ def launch_gui(core, token, *, run_mainloop=True):
     root_menu = tk.Menu(root, tearoff=False)
     root_menu.add_cascade(label='Create', menu=create_menu)
     root.configure(menu=root_menu)
+
+
+    def research_entry(kind):
+        """Private local manual-source forms. No external fetches or AI calls."""
+        if write_confirmation['active'] or controller.has_recovery():
+            status.set('A write is unresolved or confirmation active. No write.')
+            return
+        if controller._matter_id is None:
+            status.set('Select an authorized matter before adding research.')
+            return
+        try:
+            sources = controller.available_research_sources()
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Research access denied. Reauthenticate.')
+            return
+        if kind == 'observation' and not sources:
+            status.set('Add a source first; no manual source is available.')
+            return
+        dialog = tk.Toplevel(root)
+        dialog.title('Fictional research source' if kind=='source'
+                     else 'Manual source observation')
+        dialog.transient(root)
+        dialog.resizable(False,False)
+        private_forms.append(dialog)
+        form = ttk.Frame(dialog,padding=10)
+        form.pack(fill='both',expand=True)
+        fields = {}
+        if kind == 'source':
+            specifications=(('title','Source title, fictional only'),
+                            ('url','HTTPS source URL (not fetched)'),
+                            ('excerpt','Manually entered excerpt'))
+        else:
+            ttk.Label(form,text='Source number (no confidential title shown)').pack(anchor='w')
+            chosen = ttk.Combobox(form,state='readonly',
+                     values=tuple('Source '+str(i+1) for i in range(len(sources))))
+            chosen.current(0)
+            chosen.pack(fill='x')
+            specifications=(('captured','Manually observed source text'),
+                            ('note','Human observation note (12–1200 characters)'))
+        for key,title in specifications:
+            ttk.Label(form,text=title).pack(anchor='w')
+            field = ttk.Entry(form,width=55)
+            field.pack(fill='x')
+            fields[key]=field
+        original_matter=controller._matter_id
+        def save():
+            if write_confirmation['active']:
+                return
+            values={name:item.get() for name,item in fields.items()}
+            # Revalidate current account, matter and exact source selection
+            # after the native modal's nested Tk event processing.
+            write_confirmation['active']=True
+            try:
+                if not messagebox.askyesno('Confirm manual research entry',
+                    'Save this fictional manual research entry? Not verified law.',
+                    parent=dialog):
+                    return
+                if controller._matter_id!=original_matter or controller.has_recovery():
+                    raise Denied('Matter or safety status changed')
+                if kind=='source':
+                    result=controller.add_research_source(
+                        values['title'],values['url'],values['excerpt'],True)
+                else:
+                    idx=chosen.current()
+                    if idx<0 or idx>=len(sources) or (
+                            sources!=controller.available_research_sources()):
+                        raise Stale('Source list changed')
+                    result=controller.record_research_observation(
+                        sources[idx],values['captured'],values['note'],True)
+                for input_field in fields.values():
+                    input_field.delete(0,'end')
+                dialog.destroy()
+                status.set(result.message)
+                if result.status in ('source_recorded','observation_recorded'):
+                    display_counts()
+                    status.set(result.message)
+                else:
+                    clear_stale_actions()
+                    messagebox.showwarning('Research save unresolved',
+                        result.message,parent=root)
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                status.set('Research entry rejected. No new write authorized.')
+                # Do not erase an already entered draft on a validation error.
+            finally:
+                write_confirmation['active']=False
+                update_controls()
+        ttk.Button(form,text='Save manual entry',command=save).pack(side='left',pady=8)
+        ttk.Button(form,text='Cancel',command=dialog.destroy).pack(side='right',pady=8)
+        dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
+        fields[specifications[0][0]].focus_set()
+
+
+    def allow_second_review_dialog():
+        if write_confirmation['active'] or controller.has_recovery():
+            status.set('Unresolved write or confirmation active. No permission change.')
+            return
+        try:
+            users=controller.eligible_second_reviewers()
+            actor=core._identity(controller._token)
+            revision=core._role(actor,controller._matter_id,('owner',))['version']
+        except (Denied,Invalid,Stale):
+            status.set('Only the authorized matter owner can allow a reviewer.')
+            return
+        if not users:
+            status.set('No other active staff member exists in this fictional firm.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Allow a second reviewer')
+        dialog.transient(root)
+        private_forms.append(dialog)
+        form=ttk.Frame(dialog,padding=10)
+        form.pack(fill='both',expand=True)
+        ttk.Label(form,text='Choose an existing same-firm staff member. '
+                  'This grants edit/review access to this matter only.',
+                  wraplength=360).pack(anchor='w')
+        choices=ttk.Combobox(form,state='readonly',
+            values=tuple('Staff '+str(i+1) for i in range(len(users))))
+        choices.current(0)
+        choices.pack(fill='x')
+        original_matter=controller._matter_id
+        def save():
+            if write_confirmation['active']:
+                return
+            write_confirmation['active']=True
+            try:
+                if not messagebox.askyesno('Confirm reviewer access',
+                    'Allow this fictional staff member to edit and review '
+                    'the selected matter?',parent=dialog):
+                    return
+                idx=choices.current()
+                if (controller._matter_id!=original_matter or
+                    idx<0 or idx>=len(users) or
+                    users!=controller.eligible_second_reviewers()):
+                    raise Stale('Matter or staff list changed')
+                result=controller.allow_second_reviewer(
+                    users[idx],revision,True)
+                dialog.destroy()
+                status.set(result.message)
+                if result.status=='reviewer_authorized':
+                    display_counts()
+                    status.set(result.message)
+                else:
+                    clear_stale_actions()
+                    messagebox.showwarning('Reviewer access unresolved',
+                        result.message,parent=root)
+            except (Denied,Invalid,Stale):
+                status.set('Reviewer authorization denied; no change approved.')
+            finally:
+                write_confirmation['active']=False
+                update_controls()
+        ttk.Button(form,text='Allow reviewer',command=save).pack(side='left')
+        ttk.Button(form,text='Cancel',command=dialog.destroy).pack(side='right')
+        dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
+        choices.focus_set()
+
+    research_menu=tk.Menu(root,tearoff=False)
+    research_menu.add_command(label='Add manual source',
+        command=lambda: research_entry('source'))
+    research_menu.add_command(label='Record manual observation',
+        command=lambda: research_entry('observation'))
+    root_menu.add_cascade(label='Research',menu=research_menu)
+    root_menu.add_command(label='Allow second reviewer',command=allow_second_review_dialog)
 
     portfolio_button = ttk.Button(buttons,text='Workload (read only)',
                                   command=show_portfolio)

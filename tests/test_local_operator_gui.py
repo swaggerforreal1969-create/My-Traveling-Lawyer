@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from src.secure_engine import SecureCore, Denied, Invalid
+from src.secure_engine import SecureCore, Denied, Invalid, Stale
 from src.research_evidence import EvidenceInvalid
 from src.local_operator_gui import LocalOperatorController
 from src.durable_local_write_fence import LocalWriteFence
@@ -119,6 +119,201 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         with self.assertRaises(Denied):
             client.create_matter('BLOCKED',True)
         self.assertFalse(fence.is_pending())
+
+
+    def test_new_research_source_observation_second_person_and_task(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        author=LocalOperatorController(self.core,self.author,
+                                      durable_fence=LocalWriteFence(path))
+        author.list_matters()
+        author.select(0)
+        self.assertEqual(author.add_research_source(
+            'FICTIONAL NEW SOURCE','https://example.org/mock-law',
+            'Manually copied fictional excerpt',True).status,'source_recorded')
+        saved=author.available_research_sources()
+        self.assertEqual(len(saved),2)
+        self.assertEqual(author.record_research_observation(
+            saved[-1],'Invented human observation',
+            'I manually checked the fictional exhibit',True).status,
+                         'observation_recorded')
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        other=LocalOperatorController(self.core,self.reviewer,
+                                     durable_fence=LocalWriteFence(path))
+        other.list_matters()
+        other.select(0)
+        self.assertEqual(other.counts(),(1,2))
+        self.assertEqual(other.review(
+            1,'corroborated_manually',
+            'Another human reviewed fictional new evidence',True).status,
+            'review_committed')
+        self.assertEqual(other.complete(0,True).status,
+                         'completed_and_refreshed')
+        self.assertTrue(self.core.verify_audit())
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        self.assertEqual(self.audit_count('research.evidence_add'),2)
+        self.assertEqual(self.audit_count('research.manual_source_observation'),2)
+        self.assertEqual(self.audit_count('task.complete'),1)
+
+    def test_research_invalid_inputs_denied_before_reservation(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        cl=LocalOperatorController(self.core,self.author,
+                                  durable_fence=LocalWriteFence(path))
+        cl.list_matters()
+        cl.select(0)
+        with self.assertRaises(EvidenceInvalid):
+            cl.add_research_source('title','http://unsafe.example','excerpt',True)
+        with self.assertRaises(Invalid):
+            cl.record_research_observation('bad','x','short',True)
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        self.assertEqual(self.audit_count('research.evidence_add'),1)
+
+    def test_research_denies_viewer_cross_firm_and_revocation(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        reader=LocalOperatorController(self.core,self.viewer,
+                                      durable_fence=LocalWriteFence(path))
+        reader.list_matters()
+        reader.select(0)
+        with self.assertRaises(Denied):
+            reader.add_research_source('title','https://example.org/s','excerpt',True)
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        outsider=LocalOperatorController(self.core,self.outside,
+                                      durable_fence=LocalWriteFence(path))
+        outsider.list_matters()
+        with self.assertRaises(Denied):
+            outsider.add_research_source('title','https://example.org/s','excerpt',True)
+        editor=LocalOperatorController(self.core,self.reviewer,
+                                      durable_fence=LocalWriteFence(path))
+        editor.list_matters()
+        editor.select(0)
+        self.core.revoke_token(self.reviewer)
+        with self.assertRaises(Denied):
+            editor.add_research_source('title','https://example.org/s','excerpt',True)
+        self.assertFalse(LocalWriteFence(path).is_pending())
+
+    def test_research_uncertain_write_stays_blocked_after_new_controller(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        cl=LocalOperatorController(self.core,self.author,
+                                  durable_fence=LocalWriteFence(path))
+        cl.list_matters()
+        cl.select(0)
+        with patch.object(cl,'available_research_sources',
+                          side_effect=RuntimeError('lost readback')):
+            result=cl.add_research_source('FICTIONAL SOURCE','https://example.org/s',
+                                          'Manual excerpt',True)
+        self.assertEqual(result.status,'write_unresolved')
+        self.assertTrue(LocalWriteFence(path).is_pending())
+        new=LocalOperatorController(self.core,self.author,
+                                  durable_fence=LocalWriteFence(path))
+        new.list_matters()
+        new.select(0)
+        with self.assertRaises(Denied):
+            new.add_research_source('another','https://example.org/new',
+                                    'Manual excerpt',True)
+        self.assertEqual(self.audit_count('research.evidence_add'),2)
+        self.assertTrue(LocalWriteFence(path).is_pending())
+
+
+    def test_new_matter_owner_explicitly_grants_reviewer_then_completes_research(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        owner=LocalOperatorController(self.core,self.author,durable_fence=LocalWriteFence(path))
+        self.assertEqual(owner.create_matter('NEW FICTIONAL LEGAL MATTER',True).status,
+                         'matter_created')
+        matters=owner.operator.matters(self.author)['matters']
+        new=next(x for x in matters if x['matter_id']!=self.mid)
+        owner.list_matters()
+        owner.select(matters.index(new))
+        with self.assertRaises(Denied):
+            self.core._role(self.core._identity(self.reviewer),
+                            new['matter_id'],('owner','editor'))
+        self.assertEqual(owner.allow_second_reviewer(self.reviewer,
+                        new['version'],False).status,'cancelled')
+        self.assertEqual(owner.allow_second_reviewer(self.reviewer_id,
+                         new['version'],True).status,'reviewer_authorized')
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        self.assertEqual(owner.create_task('Fictional new task',
+                        '2031-01-01T00:00:00Z',True).status,'task_created')
+        self.assertEqual(owner.add_research_source(
+             'FICTIONAL EVIDENCE','https://example.org/fictional',
+             'Manual invented evidence content',True).status,'source_recorded')
+        eid=owner.available_research_sources()[0]
+        self.assertEqual(owner.record_research_observation(
+            eid,'Imaginary source observation',
+            'Human manually observed invented research',True).status,
+            'observation_recorded')
+        reviewer=LocalOperatorController(self.core,self.reviewer,
+                                        durable_fence=LocalWriteFence(path))
+        allmatters=reviewer.operator.matters(self.reviewer)['matters']
+        reviewer.list_matters()
+        reviewer.select(next(i for i,x in enumerate(allmatters)
+                        if x['matter_id']==new['matter_id']))
+        self.assertEqual(reviewer.counts(),(1,1))
+        self.assertEqual(reviewer.review(0,'corroborated_manually',
+             'Different human checked this fictional research',True).status,
+             'review_committed')
+        self.assertEqual(reviewer.complete(0,True).status,
+                         'completed_and_refreshed')
+        self.assertEqual(reviewer.counts(),(0,0))
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        self.assertTrue(self.core.verify_audit())
+
+    def test_reviewer_grant_rejects_cross_firm_non_owner_and_stale_version(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        owner=LocalOperatorController(self.core,self.author,durable_fence=LocalWriteFence(path))
+        owner.list_matters()
+        owner.select(0)
+        row=self.core._role(self.core._identity(self.author),self.mid,('owner',))
+        with self.assertRaises(Denied):
+            owner.allow_second_reviewer(self.core._identity(self.outside)['id'],
+                                         row['version'],True)
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        staff=LocalOperatorController(self.core,self.reviewer,
+                                      durable_fence=LocalWriteFence(path))
+        staff.list_matters()
+        staff.select(0)
+        with self.assertRaises(Denied):
+            staff.allow_second_reviewer(self.viewer_id,row['version'],True)
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        with self.assertRaises(Stale):
+            owner.allow_second_reviewer(self.viewer_id,row['version']-1,True)
+        self.assertFalse(LocalWriteFence(path).is_pending())
+
+
+    def test_source_post_clearance_display_failure_reports_verified_not_locked(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        actor=LocalOperatorController(self.core,self.author,
+                                     durable_fence=LocalWriteFence(path))
+        actor.list_matters()
+        actor.select(0)
+        with patch.object(actor,'_load_authorized_work',
+                          side_effect=RuntimeError('display lost')):
+            result=actor.add_research_source('Fictional source',
+                       'https://example.org/manual',
+                       'Imaginary hand-copied excerpt',True)
+        self.assertEqual(result.status,'saved_display_unavailable')
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        self.assertEqual(self.audit_count('research.evidence_add'),2)
+
+    def test_reviewer_post_clearance_display_failure_never_claims_pending_fence(self):
+        from src.durable_local_write_fence import LocalWriteFence
+        path=Path(self.tmp.name)/'fictional.sqlite3'
+        owner=LocalOperatorController(self.core,self.author,
+                                     durable_fence=LocalWriteFence(path))
+        owner.list_matters()
+        owner.select(0)
+        rev=self.core._role(self.core._identity(self.author),self.mid,('owner',))['version']
+        with patch.object(owner,'_load_authorized_work',
+                          side_effect=RuntimeError('display unavailable')):
+            result=owner.allow_second_reviewer(self.reviewer_id,rev,True)
+        self.assertEqual(result.status,'saved_display_unavailable')
+        self.assertFalse(LocalWriteFence(path).is_pending())
+        self.assertTrue(self.core.verify_audit())
 
     def test_full_graphical_controller_journey(self):
         cl=self.select()
