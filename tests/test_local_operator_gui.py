@@ -358,6 +358,52 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
             cl.allow_second_reviewer(self.reviewer_id,3,True)
         self.assertFalse(LocalWriteFence(path).is_pending())
 
+
+    def test_research_source_private_labels_bind_exact_records(self):
+        cl=LocalOperatorController(self.core,self.author,
+            durable_fence=LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3'))
+        self.select(cl)
+        second=cl.operator.workflow.evidence.add(self.author,self.mid,
+            'SECRET RESEARCH TITLE','https://other.example.org/source-two',
+            'Imaginary separate exhibit')['id']
+        choices=cl.identifiable_research_sources()
+        self.assertEqual(tuple(x[0] for x in choices),
+                         cl.available_research_sources())
+        self.assertEqual(len(choices),2)
+        self.assertTrue(any(x[0]==self.eid and
+                            'example.org' in x[1] for x in choices))
+        self.assertTrue(any(x[0]==second and
+                            'other.example.org' in x[1] for x in choices))
+        self.assertEqual(len(set(x[1] for x in choices)),2)
+        self.assertNotIn(self.author,repr(choices))
+        self.assertNotIn('SECRET EXCERPT',repr(choices))
+
+    def test_research_source_integrity_corruption_denied_without_write(self):
+        cl=LocalOperatorController(self.core,self.author,
+            durable_fence=LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3'))
+        self.select(cl)
+        before=self.audit_count('research.manual_source_observation')
+        self.core.db.execute(
+            'UPDATE research_evidence SET title=? WHERE id=?',
+            ('Forged changed legal source',self.eid))
+        with self.assertRaises(EvidenceInvalid):
+            cl.identifiable_research_sources()
+        self.assertEqual(self.audit_count('research.manual_source_observation'),before)
+        self.assertFalse(LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3').is_pending())
+
+    def test_research_source_names_denied_for_foreign_account_or_revocation(self):
+        outsider=LocalOperatorController(self.core,self.outside,
+            durable_fence=LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3'))
+        outsider.list_matters()
+        with self.assertRaises(Invalid):
+            outsider.identifiable_research_sources()
+        cl=LocalOperatorController(self.core,self.reviewer,
+            durable_fence=LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3'))
+        self.select(cl)
+        self.core.revoke_token(self.reviewer)
+        with self.assertRaises(Denied):
+            cl.identifiable_research_sources()
+
     def test_full_graphical_controller_journey(self):
         cl=self.select()
         self.assertEqual(cl.counts(),(1,1))
