@@ -136,13 +136,13 @@ class SealedFictionalInstaller(FictionalInstallerWindow):
         self.status.set("The approved fictional app is already included.")
 
     def _refresh(self):
-        valid = self.source.get() == str(self.sealed_source)
+        valid = bool(self.source.get()) and (\n            Path(self.source.get()).resolve() == self.sealed_source)
         self.install.configure(
             state=("normal" if valid and self.confirm.get()
                    and self.destination.get().strip() else "disabled"))
 
     def install_version(self):
-        if self.source.get() != str(self.sealed_source):
+        if not self.source.get() or Path(self.source.get()).resolve() != self.sealed_source:
             self.status.set("Installation denied. The approved app source cannot change.")
             return
         try:
@@ -178,22 +178,15 @@ def internal_gui_test(payload: Path) -> int:
             panel._refresh()
             if "disabled" not in panel.install.state():
                 raise RuntimeError("Untrusted executable chooser enabled")
-            panel.source.set(str(payload))
+            panel.source.set(str(panel.sealed_source))
             panel._refresh()
             with patch("tools.fictional_installer_window.messagebox.askyesno",
                        return_value=True), \
                  patch("tools.fictional_installer_window.messagebox.showinfo"):
                 panel.install.invoke()
             if panel.last_result != destination or not executable_at(destination).is_file():
-                # Fictional-only diagnostic: isolate the actual staging fault.
-                from tools.qualify_fictional_install import stage_version
-                try:
-                    stage_version(payload, Path(tmp) / "diagnostic-frozen-copy")
-                except Exception as exc:
-                    raise RuntimeError("Frozen GUI staging denied: " +
-                                       type(exc).__name__ + ": " +
-                                       str(exc)[:130]) from None
-                raise RuntimeError("Frozen GUI did not complete after confirmed stage")
+                raise RuntimeError("Frozen installer confirmation did not stage app: " +
+                                   panel.status.get()[:120])
             if not executable_at(payload).is_file():
                 raise RuntimeError("Bundled prior executable was damaged")
             with patch("tools.fictional_installer_window.messagebox.showerror"):
