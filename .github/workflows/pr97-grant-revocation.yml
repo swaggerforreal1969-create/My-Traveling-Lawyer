@@ -1,0 +1,44 @@
+name: MTL PR97 grant revocation race acceptance
+on:
+  push:
+    branches:
+      - engineering/pr97-atomic-grant-revocation-20261110
+  pull_request:
+    branches:
+      - engineering/pr95-zero-cost-semgrep-zap-guardrails-20261110
+permissions:
+  contents: read
+jobs:
+  executable-security-boundaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Select existing Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Confirm exact source SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$EXPECTED_SHA" ]; then
+            echo "EXACT_SHA_MISMATCH"
+            exit 1
+          fi
+          echo "EXACT_SHA_VERIFIED=$actual"
+      - name: Real separate-process tenant and recovery security tests
+        run: python -m unittest discover -s tests -p test_security_independent_process_gate.py -v
+      - name: Existing authenticated core authorization and audit regressions
+        run: python -m unittest discover -s tests -p test_secure_engine.py -v
+      - name: Existing private operator controller and recovery regressions
+        run: python -m unittest discover -s tests -p test_local_operator_gui.py -v
