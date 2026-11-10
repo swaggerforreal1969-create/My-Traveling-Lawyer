@@ -102,6 +102,13 @@ def visual_main() -> int:
             codes.destroy()
         tk.Button(codes, text="I saved both codes - Open practice",
                   command=confirm_saved).pack(pady=(0, 12))
+        # Closing the only copy of a newly issued code without saving it
+        # would strand the freshly created fictional workspace.
+        codes.protocol("WM_DELETE_WINDOW",
+                       lambda: messagebox.showwarning(
+                           "Save both codes first",
+                           "Save both practice access codes, then choose the button below.",
+                           parent=codes))
         codes.transient(root)
         codes.grab_set()
         root.wait_window(codes)
