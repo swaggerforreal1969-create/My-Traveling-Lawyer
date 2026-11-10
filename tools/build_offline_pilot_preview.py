@@ -131,6 +131,10 @@ IFS= read -r _unused || true
 exit "$result"
 """
 
+WINDOWS_VISUAL_START = WINDOWS_START.replace('start_pilot.py', 'start_pilot.py --gui')
+POSIX_VISUAL_START = POSIX_START.replace('start_pilot.py', 'start_pilot.py --gui')
+
+
 def build(output: Path) -> dict:
     output = Path(output)
     if output.exists() or output.is_symlink():
@@ -144,6 +148,9 @@ def build(output: Path) -> dict:
                 'independent_security_approval': False,
                 'production_use': False}
     assets = {'launch-windows.cmd': WINDOWS_START.encode('utf-8'),
+              'Open-Practice-Windows.cmd': WINDOWS_VISUAL_START.encode('utf-8'),
+              'Open-Practice-macOS.command': POSIX_VISUAL_START.encode('utf-8'),
+              'Open-Practice-Linux.sh': POSIX_VISUAL_START.encode('utf-8'),
               'launch-macos.command': POSIX_START.encode('utf-8'),
               'launch-linux.sh': POSIX_START.encode('utf-8'),
               'run_pilot.py': LAUNCHER.encode('utf-8'),
