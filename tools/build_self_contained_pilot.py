@@ -100,6 +100,7 @@ def build(output: Path) -> Path:
             "--workpath", str(Path(tmp) / "work"),
             "--specpath", str(Path(tmp) / "spec"),
             "--paths", str(package.parent),
+            "--paths", str(package),
             "--add-data", str(package) + os.pathsep + ROOT_NAME,
             "--hidden-import", "tkinter",
             "--hidden-import", "tkinter.filedialog",
