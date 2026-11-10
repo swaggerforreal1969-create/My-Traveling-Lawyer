@@ -1037,5 +1037,35 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertEqual(str(self.buttons['Complete task'].cget('state')), 'disabled')
 
 
+    def test_private_matter_brief_shows_real_work_without_writing_and_purges_on_hide(self):
+        """One attorney action shows real data, with no export and privacy purge."""
+        self.open()
+        self.select_matter()
+        before = self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0]
+        self.root.open_private_brief()
+        self.root.update()
+        dialogs = [x for x in self.root.winfo_children() if isinstance(x, tk.Toplevel)]
+        self.assertEqual(len(dialogs), 1)
+        dialog = dialogs[0]
+        areas = [w for w in descendants(dialog) if isinstance(w, tk.Text)]
+        self.assertEqual(len(areas), 1)
+        content = areas[0].get('1.0', 'end-1c')
+        self.assertIn('PRIVATE MATTER BRIEF', content)
+        self.assertIn('PRIVATE FICTITIOUS CASE', content)
+        self.assertIn('SECRET PRIVATE TASK', content)
+        self.assertIn('SECRET SOURCE', content)
+        self.assertIn('No filing or legal deadline is verified', ''.join(
+            w.cget('text') for w in descendants(dialog) if isinstance(w, ttk.Label)))
+        self.assertIn('does not calculate court deadlines', content)
+        self.assertEqual(str(areas[0].cget('state')), 'disabled')
+        self.assertEqual(before, self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0])
+        # Window visibility loss destroys all confidential transient forms.
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+
 if __name__ == '__main__':
     unittest.main()
