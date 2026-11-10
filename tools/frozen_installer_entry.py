@@ -136,7 +136,8 @@ class SealedFictionalInstaller(FictionalInstallerWindow):
         self.status.set("The approved fictional app is already included.")
 
     def _refresh(self):
-        valid = bool(self.source.get()) and (\n            Path(self.source.get()).resolve() == self.sealed_source)
+        valid = bool(self.source.get()) and (
+            Path(self.source.get()).resolve() == self.sealed_source)
         self.install.configure(
             state=("normal" if valid and self.confirm.get()
                    and self.destination.get().strip() else "disabled"))
