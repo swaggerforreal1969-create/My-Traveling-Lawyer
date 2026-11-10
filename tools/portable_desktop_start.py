@@ -24,8 +24,122 @@ def verify_package() -> bool:
     return checked_command("--verify") == 0
 
 
+
+def visual_main() -> int:
+    """Graphical first run for fictional, locally extracted pilots only.
+
+    Reuse the same verified source and offline authorization core as the
+    command-line path. Access codes are never placed in process arguments,
+    saved configuration, logs, or automatically remembered after closing.
+    """
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, simpledialog
+    from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
+    from src.secure_engine import Denied, Invalid
+
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        print("Tk display unavailable. No pilot data was changed.", file=sys.stderr)
+        return 3
+    root.title("My Traveling Lawyer - Fictional Practice Only")
+    root.geometry("550x270")
+    root.minsize(480, 230)
+    root.configure(padx=25, pady=20)
+
+    tk.Label(root, text="My Traveling Lawyer - Practice Only",
+             font=("TkDefaultFont", 15, "bold")).pack(pady=(0, 12))
+    tk.Label(root, text="Use made-up information only. Not approved for clients.",
+             wraplength=475).pack(pady=(0, 14))
+    outcome = {"code": 0}
+
+    def launch(path: Path, token: str):
+        root.destroy()
+        try:
+            open_fictional_pilot(path, token)
+        except (Denied, Invalid, OSError, ValueError):
+            messagebox.showerror("Cannot open practice workspace",
+                                 "Access denied or saved practice records unavailable. "
+                                 "No action was repeated.")
+            outcome["code"] = 2
+
+    def create():
+        selected = filedialog.asksaveasfilename(
+            parent=root, title="Create a NEW fictional practice workspace",
+            defaultextension=".sqlite3",
+            filetypes=[("Practice database", "*.sqlite3")])
+        if not selected:
+            return
+        path = Path(selected).expanduser()
+        if path.suffix.lower() != ".sqlite3" or path.exists() or path.is_symlink():
+            messagebox.showerror("Cannot create workspace",
+                                 "Choose a NEW .sqlite3 file name. Existing files are never overwritten.",
+                                 parent=root)
+            return
+        try:
+            result = initialize_fictional_pilot(path)
+        except (Denied, Invalid, OSError, ValueError):
+            messagebox.showerror("Cannot create workspace",
+                                 "Practice setup was denied. Check the chosen folder and use a new file name.",
+                                 parent=root)
+            return
+
+        # This is the only time the newly generated access codes are displayed.
+        # No clipboard write, disk file, remote service or stdout is involved.
+        codes = tk.Toplevel(root)
+        codes.title("Save your fictional practice access codes")
+        codes.geometry("670x280")
+        tk.Label(codes, text="Save these codes in a secure place before continuing.",
+                 wraplength=610).pack(pady=10)
+        text = tk.Text(codes, height=6, width=75, wrap="word")
+        text.insert("1.0", "Fictional attorney code:\n" + result["editor_token"] +
+                    "\n\nFictional reviewer code:\n" + result["reviewer_token"])
+        text.configure(state="disabled")
+        text.pack(padx=12, pady=8, fill="both", expand=True)
+        saved = {"ok": False}
+        def confirm_saved():
+            saved["ok"] = True
+            codes.destroy()
+        tk.Button(codes, text="I saved both codes - Open practice",
+                  command=confirm_saved).pack(pady=(0, 12))
+        codes.transient(root)
+        codes.grab_set()
+        root.wait_window(codes)
+        if saved["ok"]:
+            launch(path, result["editor_token"])
+
+    def open_saved():
+        selected = filedialog.askopenfilename(
+            parent=root, title="Open saved fictional practice workspace",
+            filetypes=[("Practice database", "*.sqlite3")])
+        if not selected:
+            return
+        path = Path(selected).expanduser()
+        if path.suffix.lower() != ".sqlite3" or not path.is_file() or path.is_symlink():
+            messagebox.showerror("Cannot open workspace",
+                                 "Select an existing regular .sqlite3 practice file.", parent=root)
+            return
+        token = simpledialog.askstring(
+            "Private practice access", "Enter your saved fictional access code:",
+            show="*", parent=root)
+        if not token:
+            return
+        launch(path, token)
+
+    tk.Button(root, text="Create NEW practice workspace", width=34,
+              command=create).pack(pady=6)
+    tk.Button(root, text="Open SAVED practice workspace", width=34,
+              command=open_saved).pack(pady=6)
+    tk.Button(root, text="Cancel", width=34,
+              command=root.destroy).pack(pady=6)
+    root.mainloop()
+    return outcome["code"]
+
+
 def desktop_main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=WARNING)
+    parser.add_argument("--gui", action="store_true",
+                        help="Open graphical first-run and saved-workspace chooser")
     parser.add_argument("--check", action="store_true",
                         help="Verify the extracted package and Python/Tk availability")
     args = parser.parse_args(argv)
@@ -42,6 +156,8 @@ def desktop_main(argv=None) -> int:
         return 3
     if args.check:
         return 0
+    if args.gui:
+        return visual_main()
     print("1 - Create a NEW fictional pilot database")
     print("2 - Reopen an existing fictional pilot")
     try:
