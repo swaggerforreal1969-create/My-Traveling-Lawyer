@@ -111,6 +111,15 @@ def build(output: Path) -> Path:
             raise RuntimeError("Self-contained fictional executable not found")
         subprocess.run([str(executable), "--verify"], cwd=str(built),
                        check=True, timeout=60)
+        # Inspect a host-native Tk window and real fictional SQLite journey
+        # inside the frozen executable, not a source-only Python test.
+        gui_command = [str(executable), "--self-test-gui"]
+        if sys.platform.startswith("linux"):
+            if not shutil.which("xvfb-run"):
+                raise RuntimeError("Real Linux Tk acceptance needs Xvfb")
+            gui_command = ["xvfb-run", "-a", *gui_command]
+        subprocess.run(gui_command, cwd=str(built),
+                       check=True, timeout=120)
         shutil.move(str(built), str(output))
     return output
 

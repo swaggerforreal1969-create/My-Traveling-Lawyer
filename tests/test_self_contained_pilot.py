@@ -9,7 +9,7 @@ from zipfile import ZipFile
 
 from tools.build_offline_pilot_preview import build as build_preview, ROOT_NAME
 from tools.build_self_contained_pilot import extract_approved, prepare_staging
-from tools.frozen_pilot_bootstrap import verify_tree
+from tools.frozen_pilot_bootstrap import verify_tree, main
 
 
 class FrozenPilotPrebuildAcceptance(unittest.TestCase):
@@ -41,6 +41,11 @@ class FrozenPilotPrebuildAcceptance(unittest.TestCase):
                     finally:
                         file.write_bytes(original)
             verify_tree(root, digest)
+
+
+    def test_frozen_gui_hook_is_never_authorized_in_unfrozen_source(self):
+        with patch("sys.frozen", False, create=True):
+            self.assertEqual(main(["--self-test-gui"]), 2)
 
     def test_archive_rejects_restricted_and_extra_source(self):
         with TemporaryDirectory() as tmp:
