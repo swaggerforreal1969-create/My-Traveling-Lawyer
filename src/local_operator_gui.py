@@ -1271,16 +1271,32 @@ def launch_gui(core, token, *, run_mainloop=True):
             chosen.pack(fill='x')
             specifications=(('captured','Manually observed source text'),
                             ('note','Human observation note (12–1200 characters)'))
+        multiline=('excerpt','captured','note')
         for key,title in specifications:
             ttk.Label(form,text=title).pack(anchor='w')
-            field = ttk.Entry(form,width=55)
-            field.pack(fill='x')
+            if key in multiline:
+                # Attorney research and source observations can contain
+                # meaningful line breaks; Entry silently flattens them.
+                field=tk.Text(form,width=55,height=6 if key=='captured' else 4,
+                              wrap='word',undo=False)
+                field.pack(fill='both')
+            else:
+                field=ttk.Entry(form,width=55)
+                field.pack(fill='x')
             fields[key]=field
         original_matter=controller._matter_id
+        def read_private(field):
+            return (field.get('1.0','end-1c') if isinstance(field,tk.Text)
+                    else field.get())
+        def erase_private(field):
+            if isinstance(field,tk.Text):
+                field.delete('1.0','end')
+            else:
+                field.delete(0,'end')
         def save():
             if write_confirmation['active']:
                 return
-            values={name:item.get() for name,item in fields.items()}
+            values={name:read_private(item) for name,item in fields.items()}
             # Revalidate current account, matter and exact source selection
             # after the native modal's nested Tk event processing.
             write_confirmation['active']=True
@@ -1302,7 +1318,7 @@ def launch_gui(core, token, *, run_mainloop=True):
                     result=controller.record_research_observation(
                         sources[idx],values['captured'],values['note'],True)
                 for input_field in fields.values():
-                    input_field.delete(0,'end')
+                    erase_private(input_field)
                 dialog.destroy()
                 status.set(result.message)
                 if result.status in ('source_recorded','observation_recorded'):
