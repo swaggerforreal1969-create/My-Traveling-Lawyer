@@ -85,6 +85,37 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.buttons['Select matter'].invoke()
         self.root.update()
 
+    def test_graphical_first_run_real_native_window_and_cancel_without_write(self):
+        """Exercise actual cross-platform Tk widgets, not mocked GUI calls."""
+        from tools.portable_desktop_start import visual_main
+        actual_tk = tk.Tk
+        displayed = []
+        clicked = []
+        audit_before = self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0]
+
+        def make_root():
+            root = actual_tk()
+            displayed.append(root)
+            def cancel():
+                buttons = [w for w in descendants(root)
+                           if isinstance(w, tk.Button)]
+                labels = [w.cget('text') for w in buttons]
+                self.assertIn('Create NEW practice workspace', labels)
+                self.assertIn('Open SAVED practice workspace', labels)
+                self.assertIn('Cancel', labels)
+                clicked.append(True)
+                next(w for w in buttons if w.cget('text') == 'Cancel').invoke()
+            root.after(80, cancel)
+            return root
+
+        with patch.object(tk, 'Tk', side_effect=make_root):
+            self.assertEqual(visual_main(), 0)
+        self.assertEqual(len(displayed), 1)
+        self.assertEqual(clicked, [True])
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0], audit_before)
+
     def test_offline_pilot_opens_real_tk_window_after_database_restart(self):
         from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
         path=Path(self.tmp.name)/'fresh-pilot.sqlite3'
