@@ -352,6 +352,88 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         ).fetchone()[0],before)
         self.assertTrue(self.core.verify_audit())
 
+
+    def test_named_research_selection_saves_observation_for_intended_source(self):
+        self.open(self.author)
+        self.select_matter()
+        from src.attorney_research_workflow import AttorneyResearchWorkflow
+        second=AttorneyResearchWorkflow(self.core).evidence.add(
+            self.author,self.mid,'Separate fictional authority',
+            'https://distinct.example.org/fictional-two',
+            'Another invented source excerpt')['id']
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        research.invoke(1)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                   if isinstance(x,tk.Toplevel))
+        choices=next(x for x in descendants(dialog)
+                     if isinstance(x,ttk.Combobox))
+        labels=tuple(choices.cget('values'))
+        self.assertEqual(len(labels),2)
+        selected=next(i for i,x in enumerate(labels)
+                      if 'Separate fictional authority' in x)
+        self.assertIn('distinct.example.org',labels[selected])
+        self.assertNotIn('Source 1',labels)
+        choices.current(selected)
+        fields=[x for x in descendants(dialog) if isinstance(x,tk.Text)]
+        self.assertEqual(len(fields),2)
+        fields[0].insert('1.0','Invented observation first paragraph.\\nSecond paragraph.')
+        fields[1].insert('1.0','Independent fictional research note with enough detail.')
+        confirm=[]
+        def confirm_label(title,message,**kwargs):
+            confirm.append(message)
+            return True
+        with patch.object(messagebox,'askyesno',side_effect=confirm_label):
+            save=next(x for x in descendants(dialog)
+                if isinstance(x,ttk.Button) and x.cget('text')=='Save manual entry')
+            save.invoke()
+            self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertIn('Separate fictional authority',confirm[0])
+        observations=self.core.db.execute(
+            'SELECT evidence_id,captured_text FROM source_observation '
+            'WHERE captured_text LIKE ?',
+            ('Invented observation first paragraph.%',)).fetchall()
+        self.assertEqual(len(observations),1)
+        self.assertEqual(observations[0]['evidence_id'],second)
+        self.assertTrue(self.core.verify_audit())
+        from src.durable_local_write_fence import LocalWriteFence
+        self.assertFalse(LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3').is_pending())
+
+    def test_named_research_selector_does_not_write_after_source_changed_in_confirmation(self):
+        self.open(self.author)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        research.invoke(1)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                   if isinstance(x,tk.Toplevel))
+        bodies=[x for x in descendants(dialog) if isinstance(x,tk.Text)]
+        bodies[0].insert('1.0','Invented conflicting manual observation.')
+        bodies[1].insert('1.0','This note describes the invented source in sufficient detail.')
+        before=self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.manual_source_observation'"
+        ).fetchone()[0]
+        from src.attorney_research_workflow import AttorneyResearchWorkflow
+        def change_during_confirmation(title,message,**kwargs):
+            AttorneyResearchWorkflow(self.core).evidence.add(
+                self.author,self.mid,'New invented competing source',
+                'https://other.example.org/source','Separate fictional excerpt')
+            return True
+        with patch.object(messagebox,'askyesno',side_effect=change_during_confirmation):
+            save=next(x for x in descendants(dialog)
+                if isinstance(x,ttk.Button) and x.cget('text')=='Save manual entry')
+            save.invoke()
+            self.root.update()
+        after=self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.manual_source_observation'"
+        ).fetchone()[0]
+        self.assertEqual(after,before)
+        self.assertTrue(self.core.verify_audit())
+
+
     def test_native_reviewer_access_dialog_opens_only_for_owner(self):
         self.open(self.author)
         menu=self.root.nametowidget(self.root.cget('menu'))
