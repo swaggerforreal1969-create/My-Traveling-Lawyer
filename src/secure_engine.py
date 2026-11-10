@@ -141,22 +141,34 @@ class SecureCore:
             return {'id':mid,'title':title.strip(),'version':1}
 
     def grant(self, token, matter_id, target_user, role, expected_version):
+        """Reserve the SQLite writer before checking and changing owner permissions.
+
+        A separate process cannot revoke the owner between authorization
+        and granting someone new access. No automatic replay of this write.
+        """
         if role not in ('editor','viewer'): raise Invalid('Invalid role')
         if type(expected_version)!=int or expected_version<1: raise Invalid('Invalid version')
-        with self.lock, self.db:
-            u=self._identity(token)
-            row=self._role(u,matter_id,('owner',))
-            if row['version']!=expected_version: raise Stale('Version changed')
-            target=self.db.execute('SELECT firm_id,active FROM users WHERE id=?',(target_user,)).fetchone()
-            if target is None or target['firm_id']!=u['firm_id'] or not target['active']: raise Denied('Access denied')
-            if target_user==u['id']:raise Denied('Access denied')
-            self.db.execute('''INSERT INTO grants VALUES(?,?,?) ON CONFLICT(matter_id,user_id)
-                DO UPDATE SET role=excluded.role''',(matter_id,target_user,role))
-            changed=self.db.execute('UPDATE matters SET version=version+1 WHERE id=? AND version=?',(matter_id,expected_version))
-            if changed.rowcount!=1: raise Stale('Version changed')
-            self._audit(u['id'],'grant.set',matter_id)
-            return {'matter_id':matter_id,'version':expected_version+1}
-
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Grant admission requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                row=self._role(u,matter_id,('owner',))
+                if row['version']!=expected_version: raise Stale('Version changed')
+                target=self.db.execute('SELECT firm_id,active FROM users WHERE id=?',(target_user,)).fetchone()
+                if target is None or target['firm_id']!=u['firm_id'] or not target['active']: raise Denied('Access denied')
+                if target_user==u['id']: raise Denied('Access denied')
+                self.db.execute('''INSERT INTO grants VALUES(?,?,?) ON CONFLICT(matter_id,user_id)
+                    DO UPDATE SET role=excluded.role''',(matter_id,target_user,role))
+                changed=self.db.execute('UPDATE matters SET version=version+1 WHERE id=? AND version=?',(matter_id,expected_version))
+                if changed.rowcount!=1: raise Stale('Version changed')
+                self._audit(u['id'],'grant.set',matter_id)
+                self.db.commit()
+                return {'matter_id':matter_id,'version':expected_version+1}
+            except BaseException:
+                self.db.rollback()
+                raise
     def list_matters(self, token):
         with self.lock:
             u=self._identity(token)
