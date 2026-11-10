@@ -61,6 +61,50 @@ class PortablePreviewAcceptance(unittest.TestCase):
         for name,digest in manifest['sha256'].items():
             self.assertEqual(sha256((root/name).read_bytes()).hexdigest(),digest)
 
+    def test_tampered_desktop_entrypoints_and_launch_scripts_fail_integrity(self):
+        """A formerly unprotected startup file must never get a false PASS."""
+        root = self.extract()
+        critical_assets = (
+            'start_pilot.py', 'run_pilot.py',
+            'launch-windows.cmd', 'launch-macos.command', 'launch-linux.sh',
+            'Open-Practice-Windows.cmd', 'Open-Practice-macOS.command',
+            'Open-Practice-Linux.sh', 'README.txt',
+        )
+        manifest = json.loads((root / 'MANIFEST.json').read_text())
+        self.assertEqual(set(manifest['asset_sha256']), set(critical_assets))
+        self.assertEqual(self.invoke(root, '--verify').returncode, 0)
+        for name in critical_assets:
+            with self.subTest(name=name):
+                file = root / name
+                original = file.read_bytes()
+                try:
+                    file.write_bytes(original + b'\\n# SYNTHETIC NONEXECUTABLE MUTATION\\n')
+                    denied = self.invoke(root, '--verify')
+                    self.assertNotEqual(denied.returncode, 0)
+                    self.assertIn('Pilot integrity denied', denied.stderr)
+                finally:
+                    file.write_bytes(original)
+        self.assertEqual(self.invoke(root, '--verify').returncode, 0)
+
+    def test_missing_or_linked_package_launcher_is_denied(self):
+        root = self.extract()
+        launcher = root / 'Open-Practice-Windows.cmd'
+        original = launcher.read_bytes()
+        launcher.unlink()
+        self.assertNotEqual(self.invoke(root, '--verify').returncode, 0)
+        launcher.write_bytes(original)
+        if hasattr(os, 'symlink'):
+            launcher.unlink()
+            try:
+                os.symlink(root / 'launch-windows.cmd', launcher)
+            except (OSError, PermissionError):
+                launcher.write_bytes(original)
+            else:
+                self.assertNotEqual(self.invoke(root, '--verify').returncode, 0)
+                launcher.unlink()
+                launcher.write_bytes(original)
+        self.assertEqual(self.invoke(root, '--verify').returncode, 0)
+
     def test_mutated_source_and_extra_source_fail_before_pilot(self):
         root=self.extract()
         changed=root/'src'/'offline_pilot.py'
