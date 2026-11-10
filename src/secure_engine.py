@@ -198,16 +198,35 @@ class SecureCore:
             return {'token':replacement,'expires_at':expiry}
 
     def verify_audit(self):
+        """Verify local hash chain AND its separately stored audit mirror.
+
+        A truncated/deleted chain is not an authentic empty history when the
+        mirror still contains events. Neither local table is independent
+        rollback-resistant custody; both may be changed by a database owner.
+        """
         with self.lock:
             previous='GENESIS'
             expected_seq=1
-            for row in self.db.execute('SELECT * FROM audit_chain ORDER BY seq'):
-                if row['seq']!=expected_seq: return False
+            mirror=self.db.execute(
+                'SELECT seq,actor_id,action,target,at FROM audit ORDER BY seq'
+            ).fetchall()
+            chain=self.db.execute('SELECT * FROM audit_chain ORDER BY seq').fetchall()
+            if len(mirror)!=len(chain):
+                return False
+            for row, legacy in zip(chain,mirror):
+                if row['seq']!=expected_seq or legacy['seq']!=expected_seq:
+                    return False
+                if any(row[key]!=legacy[key] for key in (
+                        'actor_id','action','target','at')):
+                    return False
                 expected_seq+=1
-                entry={'actor':row['actor_id'],'action':row['action'],'target':row['target'],
-                       'at':row['at'],'prev':previous}
-                digest=sha256(json.dumps(entry,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-                if row['previous_hash']!=previous or not compare_digest(digest,row['row_hash']):return False
+                entry={'actor':row['actor_id'],'action':row['action'],
+                       'target':row['target'],'at':row['at'],'prev':previous}
+                digest=sha256(json.dumps(entry,sort_keys=True,
+                    separators=(',',':')).encode()).hexdigest()
+                if row['previous_hash']!=previous or not compare_digest(
+                        digest,row['row_hash']):
+                    return False
                 previous=digest
             return True
 
