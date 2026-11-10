@@ -154,6 +154,61 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
                                    "AFTER_REVOCATION_SHOULD_DENY")
 
 
+    def test_owner_token_revocation_race_cannot_grant_new_access(self):
+        """Second process revokes the owner after role admission, before grant.
+
+        Must serialize either grant-then-revoke, or revoke-then-deny grant.
+        No permission may be granted after a completed revocation.
+        """
+        original_role = self.core._role
+        seen = []
+        target_id, _ = self.core.provision_user(self.firm, "New Fictional Viewer")
+        import hashlib
+        digest = hashlib.sha256(self.owner.encode()).hexdigest()
+        def role_and_compete(identity, matter_id, allowed):
+            result = original_role(identity, matter_id, allowed)
+            if not seen and identity["id"] == self.owner_id:
+                code = (
+                    "import sqlite3,sys; "
+                    "c=sqlite3.connect(sys.argv[1],timeout=0.3,isolation_level=None); "
+                    "c.execute('PRAGMA busy_timeout=300'); "
+                    "try:\n"
+                    " c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sys.argv[2],)); "
+                    " print('COMMITTED')\n"
+                    "except sqlite3.OperationalError as e:\n"
+                    " if 'locked' not in str(e).lower(): raise\n"
+                    " print('BUSY')\n"
+                    "finally:\n c.close()"
+                )
+                child = subprocess.run(
+                    [sys.executable, "-c", code, str(self.path), digest],
+                    cwd=str(Path(__file__).resolve().parents[1]),
+                    capture_output=True, text=True, timeout=12, check=False)
+                self.assertEqual(child.returncode, 0, "Revocation child failed (redacted)")
+                self.assertEqual(child.stderr, "", "Revocation child stderr (redacted)")
+                seen.append(child.stdout.strip())
+                self.assertIn(seen[0], ("COMMITTED", "BUSY"))
+            return result
+        self.core._role = role_and_compete
+        try:
+            try:
+                self.core.grant(self.owner, self.matter["id"], target_id, "viewer", 2)
+                wrote = True
+            except Denied:
+                wrote = False
+        finally:
+            self.core._role = original_role
+        self.assertEqual(len(seen), 1)
+        granted = self.core.db.execute(
+            "SELECT role FROM grants WHERE matter_id=? AND user_id=?",
+            (self.matter["id"], target_id)).fetchone()
+        if seen[0] == "COMMITTED":
+            self.assertFalse(wrote, "REVOKED_OWNER_GRANTED_NEW_ACCESS")
+            self.assertIsNone(granted, "REVOKED_OWNER_GRANT_PERSISTED")
+        else:
+            self.assertTrue(wrote, "LOCKED_GRANT_DID_NOT_COMPLETE")
+            self.assertEqual(granted["role"], "viewer")
+
     def test_audit_row_deletion_is_detected(self):
         self.core.add_note(self.owner, self.matter["id"], "FICTIONAL FIRST")
         self.core.add_note(self.owner, self.matter["id"], "FICTIONAL SECOND")
