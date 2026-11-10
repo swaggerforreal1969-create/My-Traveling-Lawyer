@@ -171,7 +171,7 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
                 code = (
                     "import sqlite3,sys; "
                     "c=sqlite3.connect(sys.argv[1],timeout=0.3,isolation_level=None); "
-                    "c.execute('PRAGMA busy_timeout=300'); "
+                    "c.execute('PRAGMA busy_timeout=300')\n"
                     "try:\n"
                     " c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sys.argv[2],)); "
                     " print('COMMITTED')\n"
