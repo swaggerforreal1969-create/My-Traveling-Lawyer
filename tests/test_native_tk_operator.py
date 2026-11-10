@@ -230,6 +230,28 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertFalse(forms[0].winfo_exists())
         self.assertTrue(self.core.verify_audit())
 
+    def test_review_grant_dialog_shows_identifiable_colleague_not_staff_numbers(self):
+        self.open(self.author)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        menu.invoke(2)
+        self.root.update()
+        dialogs=[x for x in self.root.winfo_children()
+                 if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(dialogs),1)
+        dialog=dialogs[0]
+        select=next(x for x in descendants(dialog)
+                    if isinstance(x,ttk.Combobox))
+        self.assertEqual(set(select.cget('values')),{'Reviewer','Reader'})
+        self.assertNotIn('Staff 1',select.cget('values'))
+        self.assertNotIn(self.reviewer,select.cget('values'))
+        buttons=[x for x in descendants(dialog)
+                 if isinstance(x,ttk.Button)]
+        next(x for x in buttons if x.cget('text')=='Cancel').invoke()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertTrue(self.core.verify_audit())
+
     def test_real_widget_layout_focus_and_enabled_actions(self):
         self.open()
         self.assertGreaterEqual(self.root.winfo_width(), 580)
