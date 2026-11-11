@@ -874,6 +874,7 @@ finally:
 
 
     def test_audit_head_verification_and_head_read_share_one_cross_process_snapshot(self):
+        baseline=self.core.audit_head()
         original=self.core.verify_audit
         outcomes=[]
         import hashlib
@@ -891,14 +892,14 @@ finally:
             self.core.verify_audit=original
         self.assertEqual(outcomes,["BUSY"],
                          "A separate process wrote between audit verification and head retrieval")
-        self.assertEqual(head["seq"],0)
-        self.assertEqual(head["row_hash"],"GENESIS")
+        self.assertEqual(head["seq"],baseline["seq"])
+        self.assertEqual(head["row_hash"],baseline["row_hash"])
         self.assertTrue(original())
         self.child(
             "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
             "c.execute('UPDATE credentials SET last_seen_at=last_seen_at WHERE token_digest=?',(sys.argv[2],)); "
             "c.commit(); c.close(); print('PASS')",digest)
-        self.assertEqual(self.core.audit_head()["seq"],0)
+        self.assertEqual(self.core.audit_head()["seq"],baseline["seq"])
 
 if __name__ == "__main__":
     unittest.main()
