@@ -209,6 +209,148 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
             self.assertTrue(wrote, "LOCKED_GRANT_DID_NOT_COMPLETE")
             self.assertEqual(granted["role"], "viewer")
 
+    def test_cross_process_revocation_between_identity_and_create_matter(self):
+        """A committed revocation must not be followed by stale matter creation."""
+        original = self.core._identity
+        outcomes = []
+        def identity_then_revoke(token):
+            identity = original(token)
+            if not outcomes and token == self.owner:
+                code = (
+                    "import sqlite3,sys; from hashlib import sha256; "
+                    "c=sqlite3.connect(sys.argv[1],timeout=.25,isolation_level=None); "
+                    "c.execute('PRAGMA busy_timeout=250')\\n"
+                    "try:\\n"
+                    " cur=c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',"
+                    "(sha256(sys.argv[2].encode()).hexdigest(),)); "
+                    "print('COMMITTED' if cur.rowcount==1 else 'MISSING')\\n"
+                    "except sqlite3.OperationalError as e:\\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
+                    "finally: c.close()"
+                )
+                child = subprocess.run(
+                    [sys.executable, "-c", code, str(self.path), token],
+                    cwd=str(Path(__file__).resolve().parents[1]),
+                    capture_output=True, text=True, timeout=12)
+                self.assertEqual(child.returncode, 0, "Revocation child failed (redacted)")
+                outcomes.append(child.stdout.strip())
+            return identity
+        self.core._identity = identity_then_revoke
+        try:
+            before = self.core.db.execute("SELECT count(*) FROM matters").fetchone()[0]
+            try:
+                self.core.create_matter(self.owner, "STALE OWNER MATTER")
+                created = True
+            except Denied:
+                created = False
+        finally:
+            self.core._identity = original
+        self.assertEqual(len(outcomes), 1)
+        after = self.core.db.execute("SELECT count(*) FROM matters").fetchone()[0]
+        if outcomes[0] == "COMMITTED":
+            self.assertFalse(created, "REVOKED OWNER CREATED MATTER")
+            self.assertEqual(after, before)
+        else:
+            self.assertEqual(outcomes[0], "BUSY")
+            self.assertTrue(created)
+
+    def test_cross_process_acl_downgrade_between_role_and_create_task(self):
+        """A committed editor downgrade must not be followed by task creation."""
+        original = self.core._role
+        outcomes = []
+        def role_then_downgrade(identity, matter_id, allowed):
+            result = original(identity, matter_id, allowed)
+            if not outcomes and identity["id"] == self.editor_id:
+                code = (
+                    "import sqlite3,sys; from src.secure_engine import SecureCore; "
+                    "c=None\\ntry:\\n"
+                    " c=SecureCore(sys.argv[1]); c.db.execute('PRAGMA busy_timeout=250')\\n"
+                    " c.grant(sys.argv[2],sys.argv[3],sys.argv[4],'viewer',2)\\n"
+                    " print('COMMITTED')\\n"
+                    "except sqlite3.OperationalError as e:\\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
+                    "finally:\\n"
+                    " if c is not None: c.close()"
+                )
+                child = subprocess.run(
+                    [sys.executable, "-c", code, str(self.path), self.owner,
+                     self.matter["id"], self.editor_id],
+                    cwd=str(Path(__file__).resolve().parents[1]),
+                    capture_output=True, text=True, timeout=12)
+                self.assertEqual(child.returncode, 0, "Downgrade child failed (redacted)")
+                outcomes.append(child.stdout.strip())
+            return result
+        self.core._role = role_then_downgrade
+        try:
+            before = self.core.db.execute("SELECT count(*) FROM tasks").fetchone()[0]
+            try:
+                self.core.create_task(self.editor, self.matter["id"],
+                                      "STALE EDITOR TASK", "2026-12-01T00:00:00Z")
+                created = True
+            except Denied:
+                created = False
+        finally:
+            self.core._role = original
+        self.assertEqual(len(outcomes), 1)
+        after = self.core.db.execute("SELECT count(*) FROM tasks").fetchone()[0]
+        if outcomes[0] == "COMMITTED":
+            self.assertFalse(created, "DOWNGRADED EDITOR CREATED TASK")
+            self.assertEqual(after, before)
+        else:
+            self.assertEqual(outcomes[0], "BUSY")
+            self.assertTrue(created)
+
+    def test_cross_process_revocation_between_identity_and_token_rotation(self):
+        """A completed revocation must not be followed by minting a new session."""
+        from hashlib import sha256
+        original = self.core._identity
+        outcomes = []
+        def identity_then_revoke(token):
+            identity = original(token)
+            if not outcomes and token == self.owner:
+                code = (
+                    "import sqlite3,sys; from hashlib import sha256; "
+                    "c=sqlite3.connect(sys.argv[1],timeout=.25,isolation_level=None); "
+                    "c.execute('PRAGMA busy_timeout=250')\\n"
+                    "try:\\n"
+                    " cur=c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',"
+                    "(sha256(sys.argv[2].encode()).hexdigest(),)); "
+                    "print('COMMITTED' if cur.rowcount==1 else 'MISSING')\\n"
+                    "except sqlite3.OperationalError as e:\\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
+                    "finally: c.close()"
+                )
+                child = subprocess.run(
+                    [sys.executable, "-c", code, str(self.path), token],
+                    cwd=str(Path(__file__).resolve().parents[1]),
+                    capture_output=True, text=True, timeout=12)
+                self.assertEqual(child.returncode, 0, "Revocation child failed (redacted)")
+                outcomes.append(child.stdout.strip())
+            return identity
+        self.core._identity = identity_then_revoke
+        try:
+            before = self.core.db.execute(
+                "SELECT count(*) FROM credentials WHERE user_id=? AND revoked=0",
+                (self.owner_id,)).fetchone()[0]
+            try:
+                self.core.rotate_token(self.owner)
+                rotated = True
+            except Denied:
+                rotated = False
+        finally:
+            self.core._identity = original
+        after = self.core.db.execute(
+            "SELECT count(*) FROM credentials WHERE user_id=? AND revoked=0",
+            (self.owner_id,)).fetchone()[0]
+        self.assertEqual(len(outcomes), 1)
+        if outcomes[0] == "COMMITTED":
+            self.assertFalse(rotated, "REVOKED SESSION MINTED A NEW TOKEN")
+            self.assertEqual(after, before - 1)
+        else:
+            self.assertEqual(outcomes[0], "BUSY")
+            self.assertTrue(rotated)
+
+
     def test_audit_row_deletion_is_detected(self):
         self.core.add_note(self.owner, self.matter["id"], "FICTIONAL FIRST")
         self.core.add_note(self.owner, self.matter["id"], "FICTIONAL SECOND")
