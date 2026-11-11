@@ -120,8 +120,11 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         second=self.client.private_completed_tasks_page(1)
         self.assertEqual((first['page'],first['pages'],first['total']), (0,2,21))
         self.assertEqual((len(first['items']),len(second['items'])),(20,1))
-        self.assertEqual(first['items'][0][0],'PRIVATE PAGE TASK 00')
-        self.assertEqual(second['items'][0][0],'PRIVATE PAGE TASK 20')
+        first_names={title for title,_ in first['items']}
+        second_names={title for title,_ in second['items']}
+        self.assertFalse(first_names & second_names)
+        self.assertEqual(first_names | second_names,
+                         {'PRIVATE PAGE TASK '+str(i).zfill(2) for i in range(21)})
         self.assertTrue(self.core.verify_audit())
         for bad in (-1, True, 2, 1.0):
             with self.assertRaises(Invalid):
