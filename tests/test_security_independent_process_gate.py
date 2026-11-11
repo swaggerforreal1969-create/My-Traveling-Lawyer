@@ -219,13 +219,13 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
                 code = (
                     "import sqlite3,sys; from hashlib import sha256; "
                     "c=sqlite3.connect(sys.argv[1],timeout=.25,isolation_level=None); "
-                    "c.execute('PRAGMA busy_timeout=250')\\n"
-                    "try:\\n"
+                    "c.execute('PRAGMA busy_timeout=250')\n"
+                    "try:\n"
                     " cur=c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',"
                     "(sha256(sys.argv[2].encode()).hexdigest(),)); "
-                    "print('COMMITTED' if cur.rowcount==1 else 'MISSING')\\n"
-                    "except sqlite3.OperationalError as e:\\n"
-                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
+                    "print('COMMITTED' if cur.rowcount==1 else 'MISSING')\n"
+                    "except sqlite3.OperationalError as e:\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\n"
                     "finally: c.close()"
                 )
                 child = subprocess.run(
@@ -263,13 +263,13 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
             if not outcomes and identity["id"] == self.editor_id:
                 code = (
                     "import sqlite3,sys; from src.secure_engine import SecureCore; "
-                    "c=None\\ntry:\\n"
-                    " c=SecureCore(sys.argv[1]); c.db.execute('PRAGMA busy_timeout=250')\\n"
-                    " c.grant(sys.argv[2],sys.argv[3],sys.argv[4],'viewer',2)\\n"
-                    " print('COMMITTED')\\n"
-                    "except sqlite3.OperationalError as e:\\n"
-                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
-                    "finally:\\n"
+                    "c=None\ntry:\n"
+                    " c=SecureCore(sys.argv[1]); c.db.execute('PRAGMA busy_timeout=250')\n"
+                    " c.grant(sys.argv[2],sys.argv[3],sys.argv[4],'viewer',2)\n"
+                    " print('COMMITTED')\n"
+                    "except sqlite3.OperationalError as e:\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\n"
+                    "finally:\n"
                     " if c is not None: c.close()"
                 )
                 child = subprocess.run(
@@ -311,13 +311,13 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
                 code = (
                     "import sqlite3,sys; from hashlib import sha256; "
                     "c=sqlite3.connect(sys.argv[1],timeout=.25,isolation_level=None); "
-                    "c.execute('PRAGMA busy_timeout=250')\\n"
-                    "try:\\n"
+                    "c.execute('PRAGMA busy_timeout=250')\n"
+                    "try:\n"
                     " cur=c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',"
                     "(sha256(sys.argv[2].encode()).hexdigest(),)); "
-                    "print('COMMITTED' if cur.rowcount==1 else 'MISSING')\\n"
-                    "except sqlite3.OperationalError as e:\\n"
-                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
+                    "print('COMMITTED' if cur.rowcount==1 else 'MISSING')\n"
+                    "except sqlite3.OperationalError as e:\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\n"
                     "finally: c.close()"
                 )
                 child = subprocess.run(
