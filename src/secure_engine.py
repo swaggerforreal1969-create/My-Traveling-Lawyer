@@ -150,7 +150,9 @@ class SecureCore:
                 return result
             except BaseException:
                 self.db.rollback()
-                raise    def grant(self, token, matter_id, target_user, role, expected_version):
+                raise
+
+    def grant(self, token, matter_id, target_user, role, expected_version):
         """Reserve the SQLite writer before checking and changing owner permissions.
 
         A separate process cannot revoke the owner between authorization
@@ -245,7 +247,9 @@ class SecureCore:
                 return result
             except BaseException:
                 self.db.rollback()
-                raise    def verify_audit(self):
+                raise
+
+    def verify_audit(self):
         with self.lock:
             previous='GENESIS'
             expected_seq=1
@@ -284,7 +288,9 @@ class SecureCore:
                 return result
             except BaseException:
                 self.db.rollback()
-                raise    def dashboard(self,token):
+                raise
+
+    def dashboard(self,token):
         with self.lock:
             u=self._identity(token)
             matters=self.list_matters(token)
