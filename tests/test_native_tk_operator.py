@@ -352,6 +352,37 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.root.update()
         self.assertFalse(dialog.winfo_exists())
 
+    def test_native_completed_history_pages_and_private_purge(self):
+        for i in range(21):
+            task=self.core.create_task(
+                self.author,self.mid,'PRIVATE PAGE ITEM '+str(i).zfill(2),
+                '2026-11-10T00:00:00Z')
+            self.core.complete_task(self.author,task['id'],1,
+                                    expected_matter_id=self.mid)
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        inspect.invoke(3)
+        self.root.update()
+        dialog=next(w for w in self.root.winfo_children()
+                    if isinstance(w,tk.Toplevel))
+        detail=next(w for w in descendants(dialog) if isinstance(w,tk.Text))
+        buttons={w.cget('text'):w for w in descendants(dialog)
+                 if isinstance(w,ttk.Button)}
+        self.assertIn('Page 1 of 2',detail.get('1.0','end-1c'))
+        self.assertIn('PRIVATE PAGE ITEM 00',detail.get('1.0','end-1c'))
+        self.assertEqual(str(buttons['Previous page'].cget('state')),'disabled')
+        buttons['Next page'].invoke()
+        self.root.update()
+        self.assertIn('Page 2 of 2',detail.get('1.0','end-1c'))
+        self.assertIn('PRIVATE PAGE ITEM 20',detail.get('1.0','end-1c'))
+        self.assertNotIn('PRIVATE PAGE ITEM 00',detail.get('1.0','end-1c'))
+        self.assertEqual(str(buttons['Next page'].cget('state')),'disabled')
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
     def test_native_completed_history_revocation_purges_private_view(self):
         self.open(self.reviewer)
         self.select_matter()

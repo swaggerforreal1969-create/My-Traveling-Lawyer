@@ -202,6 +202,48 @@ class LocalOperatorController:
                 result.append((row['text'],row['due_at']))
             return tuple(result)
 
+    def private_completed_tasks_page(self, page=0):
+        """Authorized, audit-checked, bounded completed history pages.
+
+        Page size is fixed at 20. Changes, revocation or revoked membership
+        are rechecked on every navigation and passive GUI privacy tick.
+        This is a local record, not independent custody or legal finality.
+        """
+        if type(page) is not int or not 0 <= page <= 100000:
+            raise Invalid('Invalid completed-history page')
+        if self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        core = self.operator.core
+        with core.authorized_transaction():
+            actor = core._identity(self._token)
+            core._role(actor, self._matter_id, ('owner', 'editor', 'viewer'))
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+            total = core.db.execute(
+                'SELECT count(*) AS total FROM tasks WHERE matter_id=? '
+                'AND completed=1', (self._matter_id,)).fetchone()['total']
+            pages = max(1, (total + 19) // 20)
+            if page >= pages:
+                raise Invalid('Completed-history page no longer exists')
+            rows = core.db.execute(
+                'SELECT id,text,due_at FROM tasks WHERE matter_id=? '
+                'AND completed=1 ORDER BY due_at,id LIMIT 20 OFFSET ?',
+                (self._matter_id, page * 20)).fetchall()
+            result = []
+            for row in rows:
+                if (type(row['text']) is not str or
+                        not 1 <= len(row['text']) <= 200 or
+                        type(row['due_at']) is not str):
+                    raise Invalid('Invalid completed task details')
+                proof = core.db.execute(
+                    "SELECT 1 FROM audit_chain WHERE action='task.complete' "
+                    'AND target=? LIMIT 1', (row['id'],)).fetchone()
+                if proof is None:
+                    raise Denied('Completed task missing local audit record')
+                result.append((row['text'], row['due_at']))
+            return {'page': page, 'pages': pages, 'total': total,
+                    'items': tuple(result)}
+
     def private_action_detail(self, kind, position):
         """Read one exact selectable work item under fresh authorization.
 
@@ -1876,13 +1918,13 @@ def launch_gui(core, token, *, run_mainloop=True):
         text.focus_set()
 
     def inspect_completed_tasks():
-        """Inspect locally completed work without a completion command."""
+        """Page through confidential history without weakening authorization."""
         if controller._matter_id is None:
             status.set('Select a matter before inspecting completed tasks.')
             return
         bound_matter=controller._matter_id
         try:
-            rows=controller.private_completed_tasks()
+            snapshot=controller.private_completed_tasks_page(0)
         except (Denied,Invalid,Stale,EvidenceInvalid):
             clear_all_visible_work()
             status.set('Completed-task history unavailable. Reauthenticate.')
@@ -1897,14 +1939,46 @@ def launch_gui(core, token, *, run_mainloop=True):
         holder.pack(fill='both',expand=True)
         detail=tk.Text(holder,wrap='word',undo=False)
         detail.pack(fill='both',expand=True)
-        detail.insert('1.0',_format_private_completed_tasks(rows))
-        detail.configure(state='disabled')
+        current={'snapshot':snapshot}
+        controls=ttk.Frame(holder)
+        controls.pack(fill='x',pady=6)
+        def display_page():
+            page=current['snapshot']
+            detail.configure(state='normal')
+            detail.delete('1.0','end')
+            detail.insert('1.0',_format_private_completed_tasks(page['items'])
+                          +'\nPage '+str(page['page']+1)+' of '+str(page['pages'])
+                          +' ('+str(page['total'])+' completed tasks)')
+            detail.configure(state='disabled')
+            previous.configure(state='normal' if page['page'] else 'disabled')
+            following.configure(state='normal'
+                                if page['page']+1<page['pages'] else 'disabled')
+        def navigate(delta):
+            try:
+                if controller._matter_id!=bound_matter:
+                    raise Denied('Matter changed')
+                next_page=controller.private_completed_tasks_page(
+                    current['snapshot']['page']+delta)
+                current['snapshot']=next_page
+                display_page()
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                dialog.destroy()
+                clear_all_visible_work()
+                status.set('Completed-task history changed. Reauthenticate.')
+        previous=ttk.Button(controls,text='Previous page',
+                            command=lambda:navigate(-1))
+        previous.pack(side='left')
+        following=ttk.Button(controls,text='Next page',
+                             command=lambda:navigate(1))
+        following.pack(side='left',padx=8)
+        ttk.Button(controls,text='Close',command=dialog.destroy).pack(side='right')
+        display_page()
         def verify_completed_history():
             if (controller._matter_id!=bound_matter or
-                    controller.private_completed_tasks()!=rows):
+                    controller.private_completed_tasks_page(
+                        current['snapshot']['page'])!=current['snapshot']):
                 raise Denied('Completed task history or authorization changed')
         dialog.private_source_check=verify_completed_history
-        ttk.Button(holder,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
         detail.focus_set()
 
     inspect_menu=tk.Menu(root,tearoff=False)

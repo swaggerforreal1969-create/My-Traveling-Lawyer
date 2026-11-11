@@ -108,6 +108,41 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         with self.assertRaises(Denied):
             self.client.private_completed_tasks()
 
+    def test_private_completed_history_pages_more_than_twenty_without_replay(self):
+        self.select()
+        for i in range(21):
+            task=self.core.create_task(
+                self.reviewer,self.mid,'PRIVATE PAGE TASK '+str(i).zfill(2),
+                '2026-11-10T00:00:00Z')
+            self.core.complete_task(self.reviewer,task['id'],1,
+                                    expected_matter_id=self.mid)
+        first=self.client.private_completed_tasks_page()
+        second=self.client.private_completed_tasks_page(1)
+        self.assertEqual((first['page'],first['pages'],first['total']), (0,2,21))
+        self.assertEqual((len(first['items']),len(second['items'])),(20,1))
+        self.assertEqual(first['items'][0][0],'PRIVATE PAGE TASK 00')
+        self.assertEqual(second['items'][0][0],'PRIVATE PAGE TASK 20')
+        self.assertTrue(self.core.verify_audit())
+        for bad in (-1, True, 2, 1.0):
+            with self.assertRaises(Invalid):
+                self.client.private_completed_tasks_page(bad)
+        viewer=LocalOperatorController(self.core,self.viewer)
+        viewer.list_matters()
+        viewer.select(0)
+        self.assertEqual(viewer.private_completed_tasks_page(1),second)
+        outsider=LocalOperatorController(self.core,self.outside)
+        with self.assertRaises(Invalid):
+            outsider.private_completed_tasks_page(0)
+        # A fabricated completed row without task.complete audit must be denied
+        # even when it falls on a later page.
+        fake=self.core.create_task(
+            self.reviewer,self.mid,'PRIVATE UNWITNESSED PAGE TASK',
+            '2026-11-10T00:00:00Z')
+        self.core.db.execute('UPDATE tasks SET completed=1 WHERE id=?',
+                             (fake['id'],))
+        with self.assertRaises(Denied):
+            self.client.private_completed_tasks_page(1)
+
     def test_private_source_readback_authorized_and_integrity_checked(self):
         self.select()
         original=self.client.private_research_source(self.eid)
