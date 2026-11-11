@@ -378,7 +378,7 @@ class LocalOperatorController:
             raise Invalid('Invalid private source selection')
         import hashlib
         import json
-        with self._core.authorized_transaction():
+        with self.operator.core.authorized_transaction():
             sources=self.operator.workflow.evidence.list(
                 self._token,self._matter_id)['sources']
             matches=[x for x in sources if x.get('id')==source_id]
