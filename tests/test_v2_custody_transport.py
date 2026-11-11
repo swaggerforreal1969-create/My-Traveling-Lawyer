@@ -7,12 +7,14 @@ from src.nonce_bound_custody import SCHEMA
 from src.provider_neutral_custody_client import AuthenticatedCustodyTransport
 from src.v2_custody_transport import NonceBoundCustodyClientV2
 from src.secure_engine import Denied
-from test_nonce_bound_custody import NonceBoundReceiptTests, PIN, verify
+import test_nonce_bound_custody as _fixture
+PIN = _fixture.PIN
+verify = _fixture.verify
 
 
 class V2TransportTests(unittest.TestCase):
     def setUp(self):
-        self.fixture=NonceBoundReceiptTests()
+        self.fixture=_fixture.NonceBoundReceiptTests()
         self.fixture.setUp()
         self.addCleanup(self.fixture.tearDown)
         self.events=self.fixture.ops
