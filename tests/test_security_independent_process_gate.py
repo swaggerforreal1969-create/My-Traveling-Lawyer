@@ -528,5 +528,90 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
         self.assertTrue(self.core.verify_audit())
         self.assertEqual(self.core.audit_head()["seq"], 4)
 
+
+    def _competing_sql(self, sql, *params):
+        """Run a real second-process write and return only its lock outcome."""
+        code = """import sqlite3,sys
+c=sqlite3.connect(sys.argv[1],timeout=.2,isolation_level=None)
+c.execute('PRAGMA busy_timeout=200')
+try:
+ cur=c.execute(sys.argv[2],tuple(sys.argv[3:]))
+ print('COMMITTED' if cur.rowcount else 'MISSING')
+except sqlite3.OperationalError as e:
+ print('BUSY' if 'locked' in str(e).lower() else 'ERROR')
+finally:
+ c.close()
+"""
+        result=subprocess.run(
+            [sys.executable,"-c",code,str(self.path),sql,*map(str,params)],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            capture_output=True,text=True,timeout=12,check=False)
+        self.assertEqual(result.returncode,0,"Competing process failed (output redacted)")
+        self.assertEqual(result.stderr,"","Competing process stderr (redacted)")
+        return result.stdout.strip()
+
+    def test_read_notes_serializes_with_cross_process_acl_downgrade(self):
+        """A concurrent downgrade cannot race the confidential-note read."""
+        self.core.add_note(self.owner,self.matter["id"],"FICTIONAL CONFIDENTIAL NOTE")
+        original=self.core._role
+        outcomes=[]
+        def role_then_downgrade(identity,matter_id,allowed):
+            result=original(identity,matter_id,allowed)
+            if not outcomes and identity["id"]==self.editor_id:
+                outcomes.append(self._competing_sql(
+                    "UPDATE grants SET role='viewer' WHERE matter_id=? AND user_id=?",
+                    matter_id,self.editor_id))
+            return result
+        self.core._role=role_then_downgrade
+        before=self.core.audit_head()
+        try:
+            notes=self.core.read_notes(self.editor,self.matter["id"])
+        finally:
+            self.core._role=original
+        self.assertEqual(outcomes,["BUSY"],
+                         "ACL downgrade committed between authorization and confidential read")
+        self.assertEqual(len(notes),1)
+        self.assertEqual(notes[0]["text"],"FICTIONAL CONFIDENTIAL NOTE")
+        self.assertEqual(self.core.audit_head(),before)
+        self.assertTrue(self.core.verify_audit())
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute(\"UPDATE grants SET role='viewer' WHERE matter_id=? AND user_id=?\","
+            "(sys.argv[2],sys.argv[3])); c.commit(); c.close(); print('PASS')",
+            self.matter["id"],self.editor_id)
+        with self.assertRaises(Denied):
+            self.core.add_note(self.editor,self.matter["id"],"MUST BE DENIED")
+
+    def test_list_matters_serializes_with_cross_process_credential_revocation(self):
+        """Revocation cannot race credential admission and matter metadata return."""
+        import hashlib
+        digest=hashlib.sha256(self.editor.encode()).hexdigest()
+        original=self.core._identity
+        outcomes=[]
+        def identity_then_revoke(token):
+            identity=original(token)
+            if not outcomes and token==self.editor:
+                outcomes.append(self._competing_sql(
+                    "UPDATE credentials SET revoked=1 WHERE token_digest=?",digest))
+            return identity
+        self.core._identity=identity_then_revoke
+        before=self.core.audit_head()
+        try:
+            matters=self.core.list_matters(self.editor)
+        finally:
+            self.core._identity=original
+        self.assertEqual(outcomes,["BUSY"],
+                         "Credential revocation committed before matter metadata was returned")
+        self.assertEqual(len(matters),1)
+        self.assertEqual(matters[0]["id"],self.matter["id"])
+        self.assertEqual(self.core.audit_head(),before)
+        self.assertTrue(self.core.verify_audit())
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sys.argv[2],)); "
+            "c.commit(); c.close(); print('PASS')",digest)
+        with self.assertRaises(Denied):
+            self.core.list_matters(self.editor)
+
 if __name__ == "__main__":
     unittest.main()

@@ -182,11 +182,21 @@ class SecureCore:
                 self.db.rollback()
                 raise
     def list_matters(self, token):
+        """Read the authorized matter list under one serialized DB snapshot."""
         with self.lock:
-            u=self._identity(token)
-            return [dict(x) for x in self.db.execute('''SELECT m.id,m.title,m.version,g.role
-                FROM matters m JOIN grants g ON m.id=g.matter_id
-                WHERE m.firm_id=? AND g.user_id=? ORDER BY m.id''',(u['firm_id'],u['id']))]
+            if self.db.in_transaction:
+                raise Invalid('Matter listing requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                result=[dict(x) for x in self.db.execute('''SELECT m.id,m.title,m.version,g.role
+                    FROM matters m JOIN grants g ON m.id=g.matter_id
+                    WHERE m.firm_id=? AND g.user_id=? ORDER BY m.id''',(u['firm_id'],u['id']))]
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def add_note(self, token, matter_id, text):
         """Hold the SQLite writer lock across credential/ACL admission and write.
@@ -214,9 +224,21 @@ class SecureCore:
                 raise
 
     def read_notes(self, token, matter_id):
+        """Keep credential, ACL and confidential-note reads in one transaction."""
         with self.lock:
-            u=self._identity(token); self._role(u,matter_id,('owner','editor','viewer'))
-            return [dict(x) for x in self.db.execute('SELECT id,text FROM notes WHERE matter_id=? ORDER BY id',(matter_id,))]
+            if self.db.in_transaction:
+                raise Invalid('Note reading requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                self._role(u,matter_id,('owner','editor','viewer'))
+                result=[dict(x) for x in self.db.execute(
+                    'SELECT id,text FROM notes WHERE matter_id=? ORDER BY id',(matter_id,))]
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def revoke_token(self, token):
         """Revoke only after serialized credential admission."""
@@ -304,15 +326,28 @@ class SecureCore:
                 raise
 
     def dashboard(self,token):
+        """Return one authorization-consistent dashboard snapshot."""
         with self.lock:
-            u=self._identity(token)
-            matters=self.list_matters(token)
-            tasks=[dict(r) for r in self.db.execute("""SELECT t.id,t.text,t.due_at,t.version,m.title AS matter_title
-                FROM tasks t JOIN matters m ON t.matter_id=m.id JOIN grants g ON m.id=g.matter_id
-                WHERE m.firm_id=? AND g.user_id=? AND t.completed=0 ORDER BY t.due_at,t.id LIMIT 30""",
-                (u['firm_id'],u['id']))]
-            return {'matter_count':len(matters),'upcoming_tasks':tasks,'as_of':datetime.now(timezone.utc).isoformat(),
-                    'note':'Dates are user-entered; no court-rule calculation or automatic legal deadline assurance.'}
+            if self.db.in_transaction:
+                raise Invalid('Dashboard requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                matter_count=self.db.execute(
+                    'SELECT count(*) FROM matters m JOIN grants g ON m.id=g.matter_id '
+                    'WHERE m.firm_id=? AND g.user_id=?',(u['firm_id'],u['id'])).fetchone()[0]
+                tasks=[dict(r) for r in self.db.execute("""SELECT t.id,t.text,t.due_at,t.version,m.title AS matter_title
+                    FROM tasks t JOIN matters m ON t.matter_id=m.id JOIN grants g ON m.id=g.matter_id
+                    WHERE m.firm_id=? AND g.user_id=? AND t.completed=0 ORDER BY t.due_at,t.id LIMIT 30""",
+                    (u['firm_id'],u['id']))]
+                result={'matter_count':matter_count,'upcoming_tasks':tasks,
+                        'as_of':datetime.now(timezone.utc).isoformat(),
+                        'note':'Dates are user-entered; no court-rule calculation or automatic legal deadline assurance.'}
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
 
     def issue_recovery_code(self, token):
