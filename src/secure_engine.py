@@ -219,23 +219,10 @@ class SecureCore:
             return [dict(x) for x in self.db.execute('SELECT id,text FROM notes WHERE matter_id=? ORDER BY id',(matter_id,))]
 
     def revoke_token(self, token):
-        """Revoke only after serialized credential admission."""
-        with self.lock:
-            if self.db.in_transaction:
-                raise Invalid('Token revocation requires an independent transaction')
-            self.db.execute('BEGIN IMMEDIATE')
-            try:
-                u=self._identity(token)
-                changed=self.db.execute(
-                    'UPDATE credentials SET revoked=1 WHERE token_digest=? AND revoked=0',
-                    (sha256(token.encode()).hexdigest(),))
-                if changed.rowcount != 1:
-                    raise Denied('Access denied')
-                self._audit(u['id'],'credential.revoke',u['id'])
-                self.db.commit()
-            except BaseException:
-                self.db.rollback()
-                raise
+        with self.lock, self.db:
+            u=self._identity(token)
+            self.db.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sha256(token.encode()).hexdigest(),))
+            self._audit(u['id'],'credential.revoke',u['id'])
 
     def rotate_token(self, token):
         """Rotate only while holding the SQLite writer reservation."""
@@ -316,26 +303,18 @@ class SecureCore:
 
 
     def issue_recovery_code(self, token):
-        """Issue a local recovery code under serialized credential admission.
+        """Issue one local recovery code while authenticated; print once, store digest only.
 
         CLI/secure local workflow only. No recovery endpoint in HTTP.
         """
-        with self.lock:
-            if self.db.in_transaction:
-                raise Invalid('Recovery-code issuance requires an independent transaction')
-            self.db.execute('BEGIN IMMEDIATE')
-            try:
-                u=self._identity(token)
-                code=token_urlsafe(40)
-                digest=sha256(code.encode()).hexdigest()
-                self.db.execute('INSERT INTO recovery_codes(user_id,code_digest,expires_at) VALUES(?,?,?)',
-                                (u['id'],digest,(datetime.now(timezone.utc)+timedelta(days=7)).isoformat()))
-                self._audit(u['id'],'recovery.issue',u['id'])
-                self.db.commit()
-                return code
-            except BaseException:
-                self.db.rollback()
-                raise
+        with self.lock, self.db:
+            u=self._identity(token)
+            code=token_urlsafe(40)
+            digest=sha256(code.encode()).hexdigest()
+            self.db.execute('INSERT INTO recovery_codes(user_id,code_digest,expires_at) VALUES(?,?,?)',
+                            (u['id'],digest,(datetime.now(timezone.utc)+timedelta(days=7)).isoformat()))
+            self._audit(u['id'],'recovery.issue',u['id'])
+            return code
 
     def recover_offline(self, user_id, code):
         """Local-only recovery: consume previously generated code, revoke all prior sessions.
@@ -345,32 +324,22 @@ class SecureCore:
         if not isinstance(user_id,str) or not isinstance(code,str) or not (40<=len(code)<=256):
             raise Denied('Access denied')
         digest=sha256(code.encode()).hexdigest()
-        with self.lock:
-            if self.db.in_transaction:
-                raise Invalid('Offline recovery requires an independent transaction')
-            self.db.execute('BEGIN IMMEDIATE')
-            try:
-                row=self.db.execute("""SELECT r.user_id FROM recovery_codes r JOIN users u ON r.user_id=u.id
-                    WHERE r.code_digest=? AND r.user_id=? AND r.used=0 AND r.expires_at>?
-                    AND u.active=1""",(digest,user_id,datetime.now(timezone.utc).isoformat())).fetchone()
-                if row is None:raise Denied('Access denied')
-                updated=self.db.execute('UPDATE recovery_codes SET used=1 WHERE code_digest=? AND used=0',(digest,))
-                if updated.rowcount!=1:raise Denied('Access denied')
-                self.db.execute('UPDATE credentials SET revoked=1 WHERE user_id=?',(user_id,))
-                self.db.execute('UPDATE recovery_codes SET used=1 WHERE user_id=?',(user_id,))
-                token=token_urlsafe(32)
-                expiry=(datetime.now(timezone.utc)+timedelta(hours=12)).isoformat()
-                self.db.execute('INSERT INTO credentials(token_digest,user_id,expires_at) VALUES(?,?,?)',
-                                (sha256(token.encode()).hexdigest(),user_id,expiry))
-                self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
-                                (datetime.now(timezone.utc).isoformat(),sha256(token.encode()).hexdigest()))
-                self._audit(user_id,'recovery.consume',user_id)
-                result={'token':token,'expires_at':expiry}
-                self.db.commit()
-                return result
-            except BaseException:
-                self.db.rollback()
-                raise
+        with self.lock,self.db:
+            row=self.db.execute("""SELECT r.user_id FROM recovery_codes r JOIN users u ON r.user_id=u.id
+                WHERE r.code_digest=? AND r.user_id=? AND r.used=0 AND r.expires_at>?
+                AND u.active=1""",(digest,user_id,datetime.now(timezone.utc).isoformat())).fetchone()
+            if row is None:raise Denied('Access denied')
+            updated=self.db.execute('UPDATE recovery_codes SET used=1 WHERE code_digest=? AND used=0',(digest,))
+            if updated.rowcount!=1:raise Denied('Access denied')
+            self.db.execute('UPDATE credentials SET revoked=1 WHERE user_id=?',(user_id,))
+            self.db.execute('UPDATE recovery_codes SET used=1 WHERE user_id=?',(user_id,))
+            token=token_urlsafe(32)
+            expiry=(datetime.now(timezone.utc)+timedelta(hours=12)).isoformat()
+            self.db.execute('INSERT INTO credentials(token_digest,user_id,expires_at) VALUES(?,?,?)',
+                            (sha256(token.encode()).hexdigest(),user_id,expiry))
+            self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(datetime.now(timezone.utc).isoformat(),sha256(token.encode()).hexdigest()))
+            self._audit(user_id,'recovery.consume',user_id)
+            return {'token':token,'expires_at':expiry}
 
     def complete_task(self,token,task_id,expected_version):
         """Serialize credential, ACL, version and task mutation with writers.
