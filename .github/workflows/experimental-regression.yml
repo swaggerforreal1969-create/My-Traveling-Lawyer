@@ -82,6 +82,10 @@ jobs:
         run: |
           python -m py_compile src/offline_pilot.py tests/test_offline_pilot.py
           python -m unittest discover -s tests -p 'test_offline_pilot.py' -q
+      - name: Credential-free fictional backup and fresh-location restore acceptance
+        run: |
+          python -m py_compile src/fictional_pilot_backup.py tests/test_fictional_pilot_backup.py
+          python -m unittest discover -s tests -p 'test_fictional_pilot_backup.py' -q
       - name: Portable fictional desktop package and extraction acceptance
         run: |
           python -m py_compile tools/build_offline_pilot_preview.py tests/test_desktop_package.py

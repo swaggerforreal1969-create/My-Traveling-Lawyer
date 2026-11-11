@@ -126,6 +126,7 @@ class FictionalBackupRestoreAcceptance(unittest.TestCase):
                                     self.archive.with_name('unsafe.json'))
 
     def test_symlink_and_missing_parent_denial(self):
+        backup_fictional_pilot(self.path,self.tokens['editor_token'],self.archive)
         if hasattr(os,'symlink'):
             link=self.restored
             os.symlink(self.path,link)

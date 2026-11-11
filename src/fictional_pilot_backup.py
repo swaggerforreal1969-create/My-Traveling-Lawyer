@@ -118,6 +118,18 @@ def backup_fictional_pilot(database: Path, token: str, archive: Path):
         data = {name: [dict(zip(part['columns'], row)) for row in part['rows']]
                 for name, part in source.items()}
         _integrity(data)
+        # Reject an authorization or unresolved-write change during capture.
+        # This is conservative; never export a snapshot after an observed
+        # revocation or newly pending incident fence.
+        with core.passive_authorization():
+            with core.authorized_transaction():
+                current=core._identity(token)
+                if current['id']!=actor['id'] or not core.verify_audit():
+                    raise Denied('Backup authorization changed')
+                for matter in core.db.execute('SELECT id FROM matters').fetchall():
+                    core._role(current,matter['id'],('owner',))
+        if LocalWriteFence(database).is_pending():
+            raise Denied('Unresolved local write; backup denied')
         # Verify the snapshot has not crossed into another firm or role.
         firms = {r['id'] for r in data['firms']}
         if len(firms) != 1 or any(r['firm_id'] not in firms for r in data['users']):
