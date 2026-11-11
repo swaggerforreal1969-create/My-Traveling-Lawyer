@@ -340,12 +340,9 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                     if isinstance(w,tk.Toplevel))
         details=next(w for w in descendants(dialog) if isinstance(w,tk.Text))
         self.assertIn('SECRET PRIVATE TASK',details.get('1.0','end-1c'))
-        self.root.event_generate('<Unmap>')
-        self.root.update()
-        self.assertFalse(dialog.winfo_exists())
-        self.select_matter()
-        self.listboxes[2].selection_set(0)
-        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        # Close the private read-only dialog without invalidating the active
+        # matter; the separate hide test proves full privacy invalidation.
+        dialog.destroy()
         self.root.update()
         with patch.object(messagebox,'askyesno',return_value=False) as confirm:
             self.buttons['Complete task'].invoke()
