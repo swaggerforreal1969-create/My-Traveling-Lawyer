@@ -1816,8 +1816,8 @@ def launch_gui(core, token, *, run_mainloop=True):
         ttk.Label(holder,text='Authorized fictional matter — read only').pack(anchor='w')
         text=tk.Text(holder,wrap='word',undo=False,height=7)
         text.pack(fill='both',expand=True)
-        text.insert('1.0','Matter title: '+details['title']+'\\n'
-                    'Your permission: '+details['role']+'\\n\\n'
+        text.insert('1.0','Matter title: '+details['title']+'\n'
+                    'Your permission: '+details['role']+'\n\n'
                     'Close this window and choose Select matter to open it.')
         text.configure(state='disabled')
         def verify_private_matter():

@@ -73,6 +73,7 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         self.core.db.execute(
             'INSERT INTO grants VALUES(?,?,?)',
             (self.mid,self.reviewer_id,'editor'))
+        self.core.db.commit()
         self.core.create_matter(self.reviewer,'SECOND FICTIONAL MATTER')
         with self.assertRaises(Stale):
             self.client.private_matter_detail(0)
