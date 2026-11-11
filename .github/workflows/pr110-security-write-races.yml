@@ -32,8 +32,10 @@ jobs:
       - name: Existing secure HTTP regressions
         run: python -m unittest discover -s tests -p test_secure_http.py -v
       - name: Source manifest gate unit tests
+        if: always()
         run: python -m unittest discover -s tests -p test_source_manifest_gate.py -v
       - name: Restricted-source audit fixture tests
+        if: always()
         run: python -m unittest discover -s tests -p test_offline_restricted_source_audit.py -v
   windows-security:
     runs-on: windows-latest
