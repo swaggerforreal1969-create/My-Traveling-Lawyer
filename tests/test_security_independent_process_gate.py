@@ -476,7 +476,7 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
     def test_offline_recovery_code_is_consumed_once_across_processes(self):
         """A recovery code can create only one replacement session."""
         code = self.core.issue_recovery_code(self.owner)
-        child_success = "\\n".join([
+        child_success = "\n".join([
             "import sys",
             "from src.secure_engine import SecureCore",
             "c=SecureCore(sys.argv[1])",
@@ -485,7 +485,7 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
             "print('PASS')",
         ])
         self.child(child_success, self.owner_id, code)
-        child_denied = "\\n".join([
+        child_denied = "\n".join([
             "import sys",
             "from src.secure_engine import SecureCore, Denied",
             "c=SecureCore(sys.argv[1])",
