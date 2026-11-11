@@ -45,7 +45,7 @@ class PreviewSessionBroker:
         self._validate_request(token, matter_id)
         if type(ttl_seconds) is not int or not (1 <= ttl_seconds <= self.MAX_TTL_SECONDS):
             raise TicketRejected('Invalid ticket lifetime')
-        with self.core.lock, self.core.db:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             self.core._role(actor, matter_id, ('owner', 'editor', 'viewer'))
             ticket = token_urlsafe(32)
@@ -71,7 +71,7 @@ class PreviewSessionBroker:
             raise TicketRejected('Timezone-aware time required')
         credential_digest = sha256(token.encode()).hexdigest()
         ticket_digest = sha256(ticket.encode()).hexdigest()
-        with self.core.lock, self.core.db:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             self.core._role(actor, matter_id, ('owner', 'editor', 'viewer'))
             updated = self.core.db.execute('''UPDATE preview_ticket SET consumed=1

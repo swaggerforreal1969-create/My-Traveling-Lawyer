@@ -17,7 +17,7 @@ class AttorneyWorkbench:
 
     def matters(self, token):
         """One authenticated overview, without matter names or notes."""
-        with self.core.lock:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             rows = self.core.db.execute('''SELECT m.id,m.version,g.role FROM matters m
                 JOIN grants g ON g.matter_id=m.id
@@ -38,7 +38,7 @@ class AttorneyWorkbench:
             now = datetime.now(timezone.utc)
         if not isinstance(now, datetime) or now.tzinfo is None:
             raise Invalid('Timezone-aware time required')
-        with self.core.lock:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             grant = self.core._role(actor,matter_id,('owner','editor','viewer'))
             rows = self.core.db.execute('''SELECT id,text,due_at,version FROM tasks
@@ -74,15 +74,10 @@ class AttorneyWorkbench:
             raise Invalid('Invalid task')
         if type(expected_version) is not int or expected_version < 1:
             raise Invalid('Invalid task version')
-        with self.core.lock:
-            actor=self.core._identity(token)
-            self.core._role(actor,matter_id,('owner','editor'))
-            row=self.core.db.execute('SELECT matter_id FROM tasks WHERE id=?',(task_id,)).fetchone()
-            if row is None or row['matter_id'] != matter_id:
-                raise Denied('Access denied')
-            result=self.core.complete_task(token,task_id,expected_version)
-            return {'schema':'mtl.private.workbench.complete.v1',
-                    'task_id':result['task_id'],'completed':True,
-                    'version':result['version'],
-                    'legal_deadlines_verified':False,
-                    'court_filing_approved':False}
+        result=self.core.complete_task(token,task_id,expected_version,
+                                        expected_matter_id=matter_id)
+        return {'schema':'mtl.private.workbench.complete.v1',
+                'task_id':result['task_id'],'completed':True,
+                'version':result['version'],
+                'legal_deadlines_verified':False,
+                'court_filing_approved':False}
