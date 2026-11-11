@@ -375,7 +375,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         menu=self.root.nametowidget(self.root.cget('menu'))
         inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
         self.assertEqual(menu.entrycget(3,'label'),'Inspect')
-        inspect.invoke(0)
+        inspect.invoke(1)
         self.root.update()
         dialog=next(w for w in self.root.winfo_children()
                     if isinstance(w,tk.Toplevel))
