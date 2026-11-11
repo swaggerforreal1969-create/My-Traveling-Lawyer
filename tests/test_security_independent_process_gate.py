@@ -806,5 +806,69 @@ finally:
         self.assertEqual(self.core.audit_head(),before)
         self.assertTrue(self.core.verify_audit())
 
+
+    def test_matter_brief_serializes_with_cross_process_credential_revocation(self):
+        from src.matter_brief import MatterBrief
+        self.core.add_note(self.owner,self.matter["id"],"FICTIONAL PRIVATE BRIEF NOTE")
+        import hashlib
+        digest=hashlib.sha256(self.owner.encode()).hexdigest()
+        original=self.core._role
+        outcomes=[]
+        def role_then_revoke(identity,matter_id,allowed):
+            result=original(identity,matter_id,allowed)
+            if not outcomes and identity["id"]==self.owner_id:
+                outcomes.append(self._competing_sql(
+                    "UPDATE credentials SET revoked=1 WHERE token_digest=?",digest))
+            return result
+        self.core._role=role_then_revoke
+        before=self.core.audit_head()
+        try:
+            brief=MatterBrief(self.core).prepare(self.owner,self.matter["id"])
+        finally:
+            self.core._role=original
+        self.assertEqual(outcomes,["BUSY"])
+        self.assertEqual(brief["notes"][0]["text"],"FICTIONAL PRIVATE BRIEF NOTE")
+        self.assertEqual(self.core.audit_head(),before)
+        self.assertTrue(self.core.verify_audit())
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sys.argv[2],)); "
+            "c.commit(); c.close(); print('PASS')",digest)
+        with self.assertRaises(Denied):
+            MatterBrief(self.core).prepare(self.owner,self.matter["id"])
+
+    def test_source_projection_serializes_with_cross_process_acl_downgrade(self):
+        from src.source_release_projection import SourceReleaseProjection
+        original=self.core._role
+        outcomes=[]
+        def role_then_downgrade(identity,matter_id,allowed):
+            result=original(identity,matter_id,allowed)
+            if not outcomes and identity["id"]==self.editor_id:
+                outcomes.append(self._competing_sql(
+                    "UPDATE grants SET role='viewer' WHERE matter_id=? AND user_id=?",
+                    matter_id,self.editor_id))
+            return result
+        self.core._role=role_then_downgrade
+        before=self.core.audit_head()
+        try:
+            projection=SourceReleaseProjection(self.core).project(
+                self.editor,self.matter["id"])
+        finally:
+            self.core._role=original
+        self.assertEqual(outcomes,["BUSY"])
+        self.assertEqual(projection["sources"],[])
+        self.assertEqual(self.core.audit_head(),before)
+        self.assertTrue(self.core.verify_audit())
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute(\"UPDATE grants SET role='viewer' WHERE matter_id=? AND user_id=?\","
+            "(sys.argv[2],sys.argv[3])); c.commit(); c.close(); print('PASS')",
+            self.matter["id"],self.editor_id)
+        with self.assertRaises(Denied):
+            # Viewer is not permitted to request the owner/editor-only projection.
+            from src.attorney_research_workflow import AttorneyResearchWorkflow
+            AttorneyResearchWorkflow(self.core).pending_second_reviews(
+                self.editor,self.matter["id"])
+
 if __name__ == "__main__":
     unittest.main()
