@@ -375,5 +375,102 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
         self.assertTrue(LocalWriteFence(self.path).is_pending())
 
 
+
+    def test_recovery_code_issuance_serializes_with_cross_process_revocation(self):
+        """A committed revocation cannot be followed by stale recovery-code issuance."""
+        original = self.core._identity
+        outcomes = []
+        def identity_then_revoke(token):
+            identity = original(token)
+            if not outcomes and token == self.owner:
+                code = (
+                    "import sqlite3,sys; from hashlib import sha256; "
+                    "c=sqlite3.connect(sys.argv[1],timeout=.25,isolation_level=None); "
+                    "c.execute('PRAGMA busy_timeout=250')\\n"
+                    "try:\\n"
+                    " cur=c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',"
+                    "(sha256(sys.argv[2].encode()).hexdigest(),)); "
+                    " print('COMMITTED' if cur.rowcount==1 else 'MISSING')\\n"
+                    "except sqlite3.OperationalError as e:\\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
+                    "finally: c.close()"
+                )
+                child = subprocess.run(
+                    [sys.executable, "-c", code, str(self.path), token],
+                    cwd=str(Path(__file__).resolve().parents[1]),
+                    capture_output=True, text=True, timeout=12)
+                self.assertEqual(child.returncode, 0, "Revocation child failed (redacted)")
+                self.assertEqual(child.stderr, "", "Revocation child stderr (redacted)")
+                outcomes.append(child.stdout.strip())
+            return identity
+        self.core._identity = identity_then_revoke
+        before = self.core.audit_head()
+        try:
+            try:
+                issued = self.core.issue_recovery_code(self.owner)
+            except Denied:
+                issued = None
+        finally:
+            self.core._identity = original
+        self.assertEqual(len(outcomes), 1)
+        if outcomes[0] == "COMMITTED":
+            self.assertIsNone(issued, "REVOKED SESSION ISSUED A RECOVERY CODE")
+            self.assertEqual(self.core.audit_head(), before)
+            self.assertEqual(self.core.db.execute(
+                "SELECT count(*) FROM recovery_codes WHERE user_id=?",
+                (self.owner_id,)).fetchone()[0], 0)
+        else:
+            self.assertEqual(outcomes[0], "BUSY")
+            self.assertIsNotNone(issued)
+            self.assertEqual(self.core.audit_head()["seq"], before["seq"] + 1)
+        self.assertTrue(self.core.verify_audit())
+
+    def test_token_revocation_serializes_with_cross_process_revocation(self):
+        """A stale session cannot append a revocation action after revocation wins."""
+        original = self.core._identity
+        outcomes = []
+        def identity_then_revoke(token):
+            identity = original(token)
+            if not outcomes and token == self.editor:
+                code = (
+                    "import sqlite3,sys; from hashlib import sha256; "
+                    "c=sqlite3.connect(sys.argv[1],timeout=.25,isolation_level=None); "
+                    "c.execute('PRAGMA busy_timeout=250')\\n"
+                    "try:\\n"
+                    " cur=c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',"
+                    "(sha256(sys.argv[2].encode()).hexdigest(),)); "
+                    " print('COMMITTED' if cur.rowcount==1 else 'MISSING')\\n"
+                    "except sqlite3.OperationalError as e:\\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
+                    "finally: c.close()"
+                )
+                child = subprocess.run(
+                    [sys.executable, "-c", code, str(self.path), token],
+                    cwd=str(Path(__file__).resolve().parents[1]),
+                    capture_output=True, text=True, timeout=12)
+                self.assertEqual(child.returncode, 0, "Revocation child failed (redacted)")
+                self.assertEqual(child.stderr, "", "Revocation child stderr (redacted)")
+                outcomes.append(child.stdout.strip())
+            return identity
+        self.core._identity = identity_then_revoke
+        before = self.core.audit_head()
+        try:
+            try:
+                self.core.revoke_token(self.editor)
+                revoked = True
+            except Denied:
+                revoked = False
+        finally:
+            self.core._identity = original
+        self.assertEqual(len(outcomes), 1)
+        if outcomes[0] == "COMMITTED":
+            self.assertFalse(revoked, "REVOKED SESSION PERFORMED A LATER WRITE")
+            self.assertEqual(self.core.audit_head(), before)
+        else:
+            self.assertEqual(outcomes[0], "BUSY")
+            self.assertTrue(revoked)
+            self.assertEqual(self.core.audit_head()["seq"], before["seq"] + 1)
+        self.assertTrue(self.core.verify_audit())
+
 if __name__ == "__main__":
     unittest.main()
