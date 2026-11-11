@@ -901,5 +901,66 @@ finally:
             "c.commit(); c.close(); print('PASS')",digest)
         self.assertEqual(self.core.audit_head()["seq"],baseline["seq"])
 
+
+    def test_device_registration_serializes_with_cross_process_token_revocation(self):
+        """The experimental HTTP device-write backend must not admit a
+        registration after another OS process revokes its credential.
+        Real SQLite process competition, fictional data, no external egress.
+        """
+        import base64
+        import hashlib
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        from src.device_challenge import DeviceChallenge
+
+        device = DeviceChallenge(self.core)
+        key_bytes = Ed25519PrivateKey.generate().public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw)
+        public_key = base64.urlsafe_b64encode(key_bytes).rstrip(b"=").decode()
+        digest = hashlib.sha256(self.editor.encode()).hexdigest()
+        original = self.core._identity
+        competitor = []
+
+        def admitted_then_competed(token):
+            identity = original(token)
+            if token == self.editor and not competitor:
+                competitor.append(self._competing_sql(
+                    "UPDATE credentials SET revoked=1 WHERE token_digest=?",
+                    digest))
+            return identity
+
+        self.core._identity = admitted_then_competed
+        before = self.core.audit_head()
+        try:
+            try:
+                device.register(self.editor, public_key)
+                registered = True
+            except Denied:
+                registered = False
+        finally:
+            self.core._identity = original
+        self.assertEqual(len(competitor), 1)
+        if competitor[0] == "COMMITTED":
+            self.assertFalse(registered, "REVOKED_TOKEN_REGISTERED_DEVICE")
+            self.assertEqual(self.core.db.execute(
+                "SELECT COUNT(*) FROM device_keys WHERE user_id=?",
+                (self.editor_id,)).fetchone()[0], 0)
+            self.assertEqual(self.core.audit_head(), before)
+        else:
+            self.assertEqual(competitor[0], "BUSY")
+            self.assertTrue(registered, "AUTHORIZED_DEVICE_WRITE_NOT_COMMITTED")
+            self.assertEqual(self.core.db.execute(
+                "SELECT COUNT(*) FROM device_keys WHERE user_id=?",
+                (self.editor_id,)).fetchone()[0], 1)
+            self.assertEqual(self.core.audit_head()["seq"], before["seq"] + 1)
+            self.assertTrue(self.core.verify_audit())
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',"
+            "(sys.argv[2],)); c.commit(); c.close(); print('PASS')", digest)
+        with self.assertRaises(Denied):
+            device.register(self.editor, public_key)
+        self.assertTrue(self.core.verify_audit())
+
 if __name__ == "__main__":
     unittest.main()
