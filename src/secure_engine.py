@@ -132,15 +132,25 @@ class SecureCore:
         return row
 
     def create_matter(self, token, title):
-        if not isinstance(title,str) or not (1<=len(title.strip())<=160):raise Invalid('Invalid title')
-        with self.lock, self.db:
-            u=self._identity(token); mid=str(uuid.uuid4())
-            self.db.execute('INSERT INTO matters(id,firm_id,title) VALUES(?,?,?)',(mid,u['firm_id'],title.strip()))
-            self.db.execute('INSERT INTO grants VALUES(?,?,?)',(mid,u['id'],'owner'))
-            self._audit(u['id'],'matter.create',mid)
-            return {'id':mid,'title':title.strip(),'version':1}
-
-    def grant(self, token, matter_id, target_user, role, expected_version):
+        if not isinstance(title,str) or not (1<=len(title.strip())<=160):
+            raise Invalid('Invalid title')
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Matter admission requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                mid=str(uuid.uuid4())
+                self.db.execute('INSERT INTO matters(id,firm_id,title) VALUES(?,?,?)',
+                                (mid,u['firm_id'],title.strip()))
+                self.db.execute('INSERT INTO grants VALUES(?,?,?)',(mid,u['id'],'owner'))
+                self._audit(u['id'],'matter.create',mid)
+                result={'id':mid,'title':title.strip(),'version':1}
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise    def grant(self, token, matter_id, target_user, role, expected_version):
         """Reserve the SQLite writer before checking and changing owner permissions.
 
         A separate process cannot revoke the owner between authorization
@@ -213,19 +223,29 @@ class SecureCore:
             self._audit(u['id'],'credential.revoke',u['id'])
 
     def rotate_token(self, token):
-        """Authenticated demo rotation; never a password-recovery substitute."""
-        with self.lock, self.db:
-            u=self._identity(token)
-            replacement=token_urlsafe(32)
-            expiry=(datetime.now(timezone.utc)+timedelta(hours=12)).isoformat()
-            self.db.execute('INSERT INTO credentials(token_digest,user_id,expires_at) VALUES(?,?,?)',
-                            (sha256(replacement.encode()).hexdigest(),u['id'],expiry))
-            self.db.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sha256(token.encode()).hexdigest(),))
-            self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(datetime.now(timezone.utc).isoformat(),sha256(replacement.encode()).hexdigest()))
-            self._audit(u['id'],'credential.rotate',u['id'])
-            return {'token':replacement,'expires_at':expiry}
-
-    def verify_audit(self):
+        """Rotate only while holding the SQLite writer reservation."""
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Token rotation requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                replacement=token_urlsafe(32)
+                expiry=(datetime.now(timezone.utc)+timedelta(hours=12)).isoformat()
+                self.db.execute('INSERT INTO credentials(token_digest,user_id,expires_at) VALUES(?,?,?)',
+                                (sha256(replacement.encode()).hexdigest(),u['id'],expiry))
+                self.db.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',
+                                (sha256(token.encode()).hexdigest(),))
+                self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+                                (datetime.now(timezone.utc).isoformat(),
+                                 sha256(replacement.encode()).hexdigest()))
+                self._audit(u['id'],'credential.rotate',u['id'])
+                result={'token':replacement,'expires_at':expiry}
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise    def verify_audit(self):
         with self.lock:
             previous='GENESIS'
             expected_seq=1
@@ -240,20 +260,31 @@ class SecureCore:
             return True
 
     def create_task(self,token,matter_id,text,due_at):
-        if not isinstance(text,str) or not 1<=len(text.strip())<=200:raise Invalid('Invalid task')
+        if not isinstance(text,str) or not 1<=len(text.strip())<=200:
+            raise Invalid('Invalid task')
         try:
             due=datetime.fromisoformat(due_at.replace('Z','+00:00'))
             if due.tzinfo is None:raise ValueError()
             due=due.astimezone(timezone.utc).isoformat()
-        except (ValueError,AttributeError,TypeError):raise Invalid('Timezone-aware ISO deadline required')
-        with self.lock,self.db:
-            u=self._identity(token);self._role(u,matter_id,('owner','editor'))
-            tid=str(uuid.uuid4())
-            self.db.execute('INSERT INTO tasks(id,matter_id,text,due_at) VALUES(?,?,?,?)',(tid,matter_id,text.strip(),due))
-            self._audit(u['id'],'task.create',tid)
-            return {'id':tid,'matter_id':matter_id,'due_at':due}
-
-    def dashboard(self,token):
+        except (ValueError,AttributeError,TypeError):
+            raise Invalid('Timezone-aware ISO deadline required')
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Task admission requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                self._role(u,matter_id,('owner','editor'))
+                tid=str(uuid.uuid4())
+                self.db.execute('INSERT INTO tasks(id,matter_id,text,due_at) VALUES(?,?,?,?)',
+                                (tid,matter_id,text.strip(),due))
+                self._audit(u['id'],'task.create',tid)
+                result={'id':tid,'matter_id':matter_id,'due_at':due}
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise    def dashboard(self,token):
         with self.lock:
             u=self._identity(token)
             matters=self.list_matters(token)
