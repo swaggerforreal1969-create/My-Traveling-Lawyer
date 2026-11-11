@@ -3,9 +3,6 @@ on:
   push:
     branches:
       - engineering/security-write-admission-audit-20261110
-  pull_request:
-    branches:
-      - engineering/pr97-atomic-grant-revocation-20261110
 permissions:
   contents: read
 jobs:
