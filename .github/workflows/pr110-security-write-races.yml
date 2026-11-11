@@ -25,6 +25,8 @@ jobs:
           actual="$(git rev-parse HEAD)"
           test "$actual" = "$EXPECTED_SHA"
           echo "EXACT_SHA_VERIFIED=$actual"
+      - name: Offline pinned HTTPS v2 integration tests
+        run: python -m unittest discover -s tests -p test_pinned_https_custody_adapter.py -v
       - name: Independent-process authorization race tests
         run: python -m unittest discover -s tests -p test_security_independent_process_gate.py -v
       - name: Existing secure engine regressions
@@ -56,6 +58,8 @@ jobs:
           $actual = (git rev-parse HEAD).Trim()
           if ($actual -ne $env:EXPECTED_SHA) { throw "EXACT_SHA_MISMATCH" }
           Write-Output "EXACT_SHA_VERIFIED=$actual"
+      - name: Offline pinned HTTPS v2 integration tests
+        run: python -m unittest discover -s tests -p test_pinned_https_custody_adapter.py -v
       - name: Independent-process authorization race tests
         run: python -m unittest discover -s tests -p test_security_independent_process_gate.py -v
       - name: Existing secure engine regressions
