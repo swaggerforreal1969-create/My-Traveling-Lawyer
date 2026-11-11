@@ -71,6 +71,35 @@ class LocalOperatorController:
         self._matters = tuple(item['matter_id'] for item in index['matters'])
         return len(self._matters)
 
+    def private_matter_detail(self, position):
+        """One fresh authorized title read, never an implicit matter selection.
+
+        The anonymous matter index and its order must still match the
+        current actor's authorized matter list. Nothing reaches root status.
+        """
+        if type(position) is not int or not 0<=position<len(self._matters):
+            raise Invalid('Select an authorized matter to inspect')
+        original=self._matters[position]
+        core=self.operator.core
+        with core.authorized_transaction():
+            actor=core._identity(self._token)
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+            index=self.operator.matters(self._token)['matters']
+            current=tuple(item['matter_id'] for item in index)
+            if current!=self._matters or current[position]!=original:
+                raise Stale('Matter list changed; refresh before inspection')
+            core._role(actor,original,('owner','editor','viewer'))
+            row=core.db.execute(
+                'SELECT title,version FROM matters WHERE id=? AND firm_id=?',
+                (original,actor['firm_id'])).fetchone()
+            if (row is None or type(row['title']) is not str or
+                    not 1<=len(row['title'])<=160):
+                raise Denied('Matter title unavailable')
+            return {'title':row['title'],'version':row['version'],
+                    'role':index[position]['role'],
+                    'identity':original}
+
     def select(self, position):
         # Keep the visible matter list available for a deliberate selection,
         # but no prior task/review selection may survive a failed switch.
@@ -1764,7 +1793,44 @@ def launch_gui(core, token, *, run_mainloop=True):
         ttk.Button(holder,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
         content.focus_set()
 
+    def inspect_selected_matter():
+        """Private matter identity preview before entering the matter."""
+        if not matter_list.curselection():
+            status.set('Select a matter number before private inspection.')
+            return
+        position=matter_list.curselection()[0]
+        try:
+            details=controller.private_matter_detail(position)
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Matter list changed or access denied. Reauthenticate.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Private matter details — read only')
+        dialog.transient(root)
+        dialog.geometry('570x290')
+        dialog.minsize(460,230)
+        private_forms.append(dialog)
+        holder=ttk.Frame(dialog,padding=10)
+        holder.pack(fill='both',expand=True)
+        ttk.Label(holder,text='Authorized fictional matter — read only').pack(anchor='w')
+        text=tk.Text(holder,wrap='word',undo=False,height=7)
+        text.pack(fill='both',expand=True)
+        text.insert('1.0','Matter title: '+details['title']+'\\n'
+                    'Your permission: '+details['role']+'\\n\\n'
+                    'Close this window and choose Select matter to open it.')
+        text.configure(state='disabled')
+        def verify_private_matter():
+            if (tuple(matter_list.curselection())!=(position,) or
+                    controller.private_matter_detail(position)!=details):
+                raise Denied('Matter selection or authorization changed')
+        dialog.private_source_check=verify_private_matter
+        ttk.Button(holder,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
+        text.focus_set()
+
     inspect_menu=tk.Menu(root,tearoff=False)
+    inspect_menu.add_command(label='Selected matter (read only)',
+                             command=inspect_selected_matter)
     inspect_menu.add_command(label='Selected task (read only)',
                              command=lambda: inspect_selected_action('task'))
     inspect_menu.add_command(label='Selected review (read only)',

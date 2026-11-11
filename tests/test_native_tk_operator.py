@@ -325,6 +325,47 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.root.update()
         self.assertFalse(dialog.winfo_exists())
 
+    def test_private_matter_preview_before_selection_and_hide_purges(self):
+        self.open(self.reviewer)
+        self.listboxes[0].selection_set(0)
+        self.listboxes[0].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        self.assertEqual(menu.entrycget(3,'label'),'Inspect')
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        self.assertEqual(inspect.entrycget(0,'label'),
+                         'Selected matter (read only)')
+        inspect.invoke(0)
+        self.root.update()
+        dialogs=[x for x in self.root.winfo_children()
+                 if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(dialogs),1)
+        dialog=dialogs[0]
+        text=next(x for x in descendants(dialog) if isinstance(x,tk.Text))
+        self.assertIn('PRIVATE FICTITIOUS CASE',text.get('1.0','end-1c'))
+        self.assertNotIn('PRIVATE FICTITIOUS CASE',
+                         self.listboxes[0].get(0))
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertTrue(self.core.verify_audit())
+
+    def test_private_matter_preview_revocation_hides(self):
+        self.open(self.reviewer)
+        self.listboxes[0].selection_set(0)
+        self.listboxes[0].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        inspect.invoke(0)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        self.core.revoke_token(self.reviewer)
+        self.root.privacy_check()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
     def test_private_selected_action_details_and_confirmations_show_real_work(self):
         self.open(self.reviewer)
         self.select_matter()

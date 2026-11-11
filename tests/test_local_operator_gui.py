@@ -48,6 +48,35 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
             'SELECT count(*) FROM audit_chain WHERE action=?',(action,)).fetchone()[0]
 
 
+    def test_private_matter_preview_is_authorized_and_read_only(self):
+        before=self.core.db.execute('SELECT count(*) FROM audit_chain').fetchone()[0]
+        self.assertEqual(self.client.list_matters(),1)
+        detail=self.client.private_matter_detail(0)
+        self.assertEqual(detail['title'],'SECRET CLIENT CASE')
+        self.assertEqual(detail['role'],'editor')
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0],before)
+        self.assertIsNone(self.client._matter_id)
+        outsider=LocalOperatorController(self.core,self.outside)
+        self.assertEqual(outsider.list_matters(),0)
+        with self.assertRaises(Invalid):
+            outsider.private_matter_detail(0)
+
+    def test_private_matter_preview_denies_stale_grant_and_reordered_index(self):
+        self.client.list_matters()
+        self.core.db.execute(
+            'DELETE FROM grants WHERE matter_id=? AND user_id=?',
+            (self.mid,self.reviewer_id))
+        with self.assertRaises((Denied,Stale)):
+            self.client.private_matter_detail(0)
+        # A newly inserted authorized matter changes the current index.
+        self.core.db.execute(
+            'INSERT INTO grants VALUES(?,?,?)',
+            (self.mid,self.reviewer_id,'editor'))
+        self.core.create_matter(self.reviewer,'SECOND FICTIONAL MATTER')
+        with self.assertRaises(Stale):
+            self.client.private_matter_detail(0)
+
     def test_private_source_readback_authorized_and_integrity_checked(self):
         self.select()
         original=self.client.private_research_source(self.eid)
