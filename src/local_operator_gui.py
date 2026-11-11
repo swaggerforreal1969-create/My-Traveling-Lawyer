@@ -878,14 +878,14 @@ class LocalOperatorController:
 def _format_private_action_detail(detail):
     """Never put private task/review text in the main window or log."""
     if detail['kind']=='task':
-        return ('Task to complete:\\n'+detail['text']+'\\n\\n'
+        return ('Task to complete:\n'+detail['text']+'\n\n'
                 'User-entered date (NOT a court deadline): '
-                +detail['date']+'\\n\\n'
+                +detail['date']+'\n\n'
                 'Review the task before authorizing a single completion.')
-    return ('Second-human review of:\\n'+detail['title']+'\\n'
-            'Website (not opened): '+detail['url']+'\\n\\n'
-            'Existing human observation note:\\n'+detail['note']
-            +'\\n\\nThis is NOT verified legal authority. '
+    return ('Second-human review of:\n'+detail['title']+'\n'
+            'Website (not opened): '+detail['url']+'\n\n'
+            'Existing human observation note:\n'+detail['note']
+            +'\n\nThis is NOT verified legal authority. '
             'Your decision will be recorded for this exact observation.')
 
 
@@ -1238,9 +1238,14 @@ def launch_gui(core, token, *, run_mainloop=True):
                 clear_stale_actions()
                 return
             decision = choice.get()
-            detail=controller.private_action_detail('review',position)
-            if detail['identity']!=identity:
-                raise Stale('Selected review changed')
+            try:
+                detail=controller.private_action_detail('review',position)
+                if detail['identity']!=identity:
+                    raise Stale('Selected review changed')
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                status.set('Selected review changed or access denied. Refresh before action.')
+                clear_stale_actions()
+                return
             if not messagebox.askyesno('Confirm second-human review',
                                        _format_private_action_detail(detail)
                                        +'\\n\\nRecord this review? No automatic retry.'):
@@ -1282,9 +1287,14 @@ def launch_gui(core, token, *, run_mainloop=True):
             except (IndexError, TypeError):
                 clear_stale_actions()
                 return
-            detail=controller.private_action_detail('task',position)
-            if detail['identity']!=identity:
-                raise Stale('Selected task changed')
+            try:
+                detail=controller.private_action_detail('task',position)
+                if detail['identity']!=identity:
+                    raise Stale('Selected task changed')
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                status.set('Selected task changed or access denied. Refresh before action.')
+                clear_stale_actions()
+                return
             if not messagebox.askyesno('Confirm task completion',
                                        _format_private_action_detail(detail)
                                        +'\\n\\nComplete this task? No automatic retry.'):
