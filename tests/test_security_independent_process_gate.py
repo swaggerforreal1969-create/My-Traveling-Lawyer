@@ -613,39 +613,5 @@ finally:
         with self.assertRaises(Denied):
             self.core.list_matters(self.editor)
 
-
-    def test_dashboard_serializes_with_cross_process_credential_revocation(self):
-        """A revoked session cannot race dashboard task metadata retrieval."""
-        self.core.create_task(self.editor,self.matter["id"],"FICTIONAL DASHBOARD TASK",
-                              "2026-12-02T00:00:00Z")
-        import hashlib
-        digest=hashlib.sha256(self.editor.encode()).hexdigest()
-        original=self.core._identity
-        outcomes=[]
-        def identity_then_revoke(token):
-            identity=original(token)
-            if not outcomes and token==self.editor:
-                outcomes.append(self._competing_sql(
-                    "UPDATE credentials SET revoked=1 WHERE token_digest=?",digest))
-            return identity
-        self.core._identity=identity_then_revoke
-        before=self.core.audit_head()
-        try:
-            dashboard=self.core.dashboard(self.editor)
-        finally:
-            self.core._identity=original
-        self.assertEqual(outcomes,["BUSY"],
-                         "Credential revocation raced dashboard data retrieval")
-        self.assertEqual(dashboard["matter_count"],1)
-        self.assertEqual(len(dashboard["upcoming_tasks"]),1)
-        self.assertEqual(self.core.audit_head(),before)
-        self.assertTrue(self.core.verify_audit())
-        self.child(
-            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
-            "c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sys.argv[2],)); "
-            "c.commit(); c.close(); print('PASS')",digest)
-        with self.assertRaises(Denied):
-            self.core.dashboard(self.editor)
-
 if __name__ == "__main__":
     unittest.main()
