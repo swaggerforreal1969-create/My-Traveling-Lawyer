@@ -85,6 +85,47 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.buttons['Select matter'].invoke()
         self.root.update()
 
+    def test_00_rec08_restored_pilot_native_close_reopen_fresh_credentials(self):
+        # Native recovered database lifecycle: new tokens, two real windows.
+        from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
+        from src.fictional_pilot_backup import backup_fictional_pilot, restore_fictional_pilot
+        from src.secure_engine import Denied
+        original = Path(self.tmp.name) / 'rec08-source.sqlite3'
+        archive = Path(self.tmp.name) / 'rec08-fictional-backup.json'
+        restored = Path(self.tmp.name) / 'rec08-restored.sqlite3'
+        issued = initialize_fictional_pilot(original)
+        backup_fictional_pilot(original, issued['editor_token'], archive)
+        restored_issued = restore_fictional_pilot(archive, restored)
+        fresh = {row['user']: row['token'] for row in restored_issued['accounts']}
+        with self.assertRaises(Denied):
+            open_fictional_pilot(restored, issued['reviewer_token'],
+                                 run_mainloop=False)
+        for attempt in range(2):
+            root, opened = open_fictional_pilot(
+                restored, fresh['Independent Fictional Reviewer'],
+                run_mainloop=False)
+            try:
+                root.update()
+                self.assertIn('Local Operator', root.title())
+                widgets = descendants(root)
+                buttons = {w.cget('text'): w for w in widgets
+                           if isinstance(w, ttk.Button)}
+                buttons['Workload (read only)'].invoke()
+                root.update()
+                fields = [w.get('1.0', 'end-1c') for w in widgets
+                          if isinstance(w, tk.Text)]
+                self.assertTrue(any('Open user-entered tasks: 1' in s
+                                    for s in fields))
+                self.assertTrue(opened.verify_audit())
+            finally:
+                root.destroy()
+                opened.close()
+        reopened = SecureCore(restored)
+        try:
+            self.assertTrue(reopened.verify_audit())
+        finally:
+            reopened.close()
+
     def test_offline_pilot_opens_real_tk_window_after_database_restart(self):
         from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
         path=Path(self.tmp.name)/'fresh-pilot.sqlite3'
