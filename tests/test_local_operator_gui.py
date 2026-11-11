@@ -143,8 +143,16 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
             '2026-11-10T00:00:00Z')
         self.core.db.execute('UPDATE tasks SET completed=1 WHERE id=?',
                              (fake['id'],))
+        ordered=[r['id'] for r in self.core.db.execute(
+            'SELECT id FROM tasks WHERE matter_id=? AND completed=1 '
+            'ORDER BY due_at,id',(self.mid,)).fetchall()]
+        affected_page=ordered.index(fake['id'])//20
         with self.assertRaises(Denied):
-            self.client.private_completed_tasks_page(1)
+            self.client.private_completed_tasks_page(affected_page)
+        # The other page is still readable; only the affected page fails
+        # its local audit proof rather than silently hiding a bad record.
+        self.assertEqual(len(self.client.private_completed_tasks_page(
+            1-affected_page)['items']),20 if affected_page==1 else 2)
 
     def test_private_source_readback_authorized_and_integrity_checked(self):
         self.select()
