@@ -647,5 +647,164 @@ finally:
         with self.assertRaises(Denied):
             self.core.dashboard(self.editor)
 
+
+    def test_workbench_matter_snapshot_serializes_with_cross_process_acl_downgrade(self):
+        from src.attorney_workbench import AttorneyWorkbench
+        original=self.core._role
+        outcomes=[]
+        def role_then_downgrade(identity,matter_id,allowed):
+            result=original(identity,matter_id,allowed)
+            if not outcomes and identity["id"]==self.editor_id:
+                outcomes.append(self._competing_sql(
+                    "UPDATE grants SET role='viewer' WHERE matter_id=? AND user_id=?",
+                    matter_id,self.editor_id))
+            return result
+        self.core._role=role_then_downgrade
+        before=self.core.audit_head()
+        try:
+            view=AttorneyWorkbench(self.core).matter(
+                self.editor,self.matter["id"])
+        finally:
+            self.core._role=original
+        self.assertEqual(outcomes,["BUSY"])
+        self.assertTrue(view["can_complete_tasks"])
+        self.assertEqual(self.core.audit_head(),before)
+        self.assertTrue(self.core.verify_audit())
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute(\"UPDATE grants SET role='viewer' WHERE matter_id=? AND user_id=?\","
+            "(sys.argv[2],sys.argv[3])); c.commit(); c.close(); print('PASS')",
+            self.matter["id"],self.editor_id)
+        current=AttorneyWorkbench(self.core).matter(self.editor,self.matter["id"])
+        self.assertFalse(current["can_complete_tasks"])
+
+    def test_research_evidence_add_serializes_with_cross_process_revocation(self):
+        from src.research_evidence import ResearchEvidence
+        original=self.core._role
+        outcomes=[]
+        def role_then_revoke(identity,matter_id,allowed):
+            result=original(identity,matter_id,allowed)
+            if not outcomes and identity["id"]==self.editor_id:
+                import hashlib
+                digest=hashlib.sha256(self.editor.encode()).hexdigest()
+                outcomes.append(self._competing_sql(
+                    "UPDATE credentials SET revoked=1 WHERE token_digest=?",digest))
+            return result
+        self.core._role=role_then_revoke
+        before=self.core.audit_head()
+        try:
+            created=ResearchEvidence(self.core).add(
+                self.editor,self.matter["id"],"Fictional source",
+                "https://example.gov/rule","Fictional excerpt")
+        finally:
+            self.core._role=original
+        self.assertEqual(outcomes,["BUSY"])
+        self.assertEqual(self.core.audit_head()["seq"],before["seq"]+1)
+        self.assertTrue(self.core.verify_audit())
+        rows=self.core.db.execute(
+            "SELECT id FROM research_evidence WHERE matter_id=?",(self.matter["id"],)).fetchall()
+        self.assertEqual(len(rows),1)
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sys.argv[2],)); "
+            "c.commit(); c.close(); print('PASS')",
+            __import__("hashlib").sha256(self.editor.encode()).hexdigest())
+        with self.assertRaises(Denied):
+            ResearchEvidence(self.core).add(
+                self.editor,self.matter["id"],"Must deny",
+                "https://example.gov/other","No write after revocation")
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM research_evidence WHERE matter_id=?",
+            (self.matter["id"],)).fetchone()[0],1)
+        self.assertTrue(self.core.verify_audit())
+
+    def test_preview_ticket_issue_serializes_with_cross_process_revocation(self):
+        from src.preview_session import PreviewSessionBroker
+        broker=PreviewSessionBroker(self.core)
+        original=self.core._role
+        outcomes=[]
+        def role_then_revoke(identity,matter_id,allowed):
+            result=original(identity,matter_id,allowed)
+            if not outcomes and identity["id"]==self.editor_id:
+                import hashlib
+                digest=hashlib.sha256(self.editor.encode()).hexdigest()
+                outcomes.append(self._competing_sql(
+                    "UPDATE credentials SET revoked=1 WHERE token_digest=?",digest))
+            return result
+        self.core._role=role_then_revoke
+        try:
+            issued=broker.issue(self.editor,self.matter["id"])
+        finally:
+            self.core._role=original
+        self.assertEqual(outcomes,["BUSY"])
+        self.assertTrue(issued["single_use"])
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sys.argv[2],)); "
+            "c.commit(); c.close(); print('PASS')",
+            __import__("hashlib").sha256(self.editor.encode()).hexdigest())
+        with self.assertRaises(Denied):
+            broker.issue(self.editor,self.matter["id"])
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM preview_ticket WHERE user_id=?",
+            (self.editor_id,)).fetchone()[0],1)
+        self.assertTrue(self.core.verify_audit())
+
+    def test_source_observation_capture_serializes_with_cross_process_revocation(self):
+        from src.research_evidence import ResearchEvidence
+        from src.source_observation import SourceObservation
+        evidence=ResearchEvidence(self.core).add(
+            self.owner,self.matter["id"],"Fictional source",
+            "https://example.gov/rule","Fictional excerpt")
+        original=self.core._role
+        outcomes=[]
+        def role_then_revoke(identity,matter_id,allowed):
+            result=original(identity,matter_id,allowed)
+            if not outcomes and identity["id"]==self.editor_id:
+                import hashlib
+                digest=hashlib.sha256(self.editor.encode()).hexdigest()
+                outcomes.append(self._competing_sql(
+                    "UPDATE credentials SET revoked=1 WHERE token_digest=?",digest))
+            return result
+        self.core._role=role_then_revoke
+        before=self.core.audit_head()
+        try:
+            observed=SourceObservation(self.core).capture(
+                self.editor,self.matter["id"],evidence["id"],
+                "Fictional captured text","Manual fictional verification note")
+        finally:
+            self.core._role=original
+        self.assertEqual(outcomes,["BUSY"])
+        self.assertEqual(self.core.audit_head()["seq"],before["seq"]+1)
+        self.assertTrue(self.core.verify_audit())
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sys.argv[2],)); "
+            "c.commit(); c.close(); print('PASS')",
+            __import__("hashlib").sha256(self.editor.encode()).hexdigest())
+        with self.assertRaises(Denied):
+            SourceObservation(self.core).capture(
+                self.editor,self.matter["id"],evidence["id"],
+                "Must not be captured","This must be rejected after revocation")
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM source_observation WHERE matter_id=?",
+            (self.matter["id"],)).fetchone()[0],1)
+        self.assertTrue(self.core.verify_audit())
+
+    def test_workbench_completion_rejects_task_from_different_selected_matter(self):
+        from src.attorney_workbench import AttorneyWorkbench
+        second=self.core.create_matter(self.owner,"FICTIONAL SECOND MATTER")
+        task=self.core.create_task(self.owner,self.matter["id"],"FICTIONAL TASK",
+                                   "2026-12-03T00:00:00Z")
+        before=self.core.audit_head()
+        with self.assertRaises(Denied):
+            AttorneyWorkbench(self.core).complete(
+                self.owner,second["id"],task["id"],1)
+        row=self.core.db.execute(
+            "SELECT completed,version FROM tasks WHERE id=?",(task["id"],)).fetchone()
+        self.assertEqual((row["completed"],row["version"]),(0,1))
+        self.assertEqual(self.core.audit_head(),before)
+        self.assertTrue(self.core.verify_audit())
+
 if __name__ == "__main__":
     unittest.main()
