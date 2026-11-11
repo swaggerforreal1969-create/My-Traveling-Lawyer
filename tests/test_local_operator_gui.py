@@ -73,6 +73,38 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         with self.assertRaises(EvidenceInvalid):
             self.client.private_research_source(self.eid)
 
+    def test_private_research_dossier_shows_integrity_checked_human_history(self):
+        self.select()
+        before=self.core.db.execute('SELECT count(*) FROM audit_chain').fetchone()[0]
+        dossier=self.client.private_research_dossier(self.eid)
+        self.assertEqual(dossier['source']['excerpt'],'SECRET EXCERPT')
+        self.assertEqual(dossier['total_observations'],1)
+        self.assertEqual(dossier['total_reviews'],0)
+        self.assertEqual(dossier['observations'][0]['note'],
+                         'Manual observation from fictional document')
+        self.assertNotIn('actor_id',dossier['observations'][0])
+        self.assertNotIn('observation_id',dossier['observations'][0])
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0],before)
+        self.client.operator.workflow.reviews.record(
+            self.reviewer,self.mid,self.eid,self.oid,
+            'needs_further_review','Independent second human requests further review')
+        verdict=self.client.private_research_dossier(self.eid)
+        self.assertEqual(verdict['total_reviews'],1)
+        self.assertEqual(verdict['reviews'][0]['decision'],'needs_further_review')
+        self.assertNotIn('reviewer_id',verdict['reviews'][0])
+        other=LocalOperatorController(self.core,self.outside)
+        with self.assertRaises(Invalid):
+            other.private_research_dossier(self.eid)
+
+    def test_private_dossier_rejects_corrupt_observation_and_second_review(self):
+        self.select()
+        self.core.db.execute(
+            'UPDATE source_observation SET note=? WHERE observation_id=?',
+            ('TAMPERED HUMAN NOTE',self.oid))
+        with self.assertRaises(EvidenceInvalid):
+            self.client.private_research_dossier(self.eid)
+
     def test_explicit_matter_and_task_creation_and_reopen(self):
         fence = LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3')
         client = LocalOperatorController(self.core,self.author,durable_fence=fence)

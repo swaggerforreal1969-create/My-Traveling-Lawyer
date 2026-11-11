@@ -277,7 +277,7 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         private=[x for x in descendants(dialog) if isinstance(x,tk.Text)]
         self.assertEqual(len(private),1)
         self.assertIn('SECRET EXCERPT',private[0].get('1.0','end-1c'))
-        self.assertIn('NOT authenticated legal authority',
+        self.assertIn('NOT authenticated legal authority or independent custody',
                       private[0].get('1.0','end-1c'))
         self.assertEqual(self.core.db.execute(
             "SELECT count(*) FROM audit_chain WHERE action='research.evidence_add'"
@@ -298,6 +298,30 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertTrue(dialog.winfo_exists())
         self.core.revoke_token(self.reviewer)
         self.root.privacy_check()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_native_private_dossier_displays_history_and_second_human_decision(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        research.invoke(2)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        detail=next(x for x in descendants(dialog) if isinstance(x,tk.Text))
+        displayed=detail.get('1.0','end-1c')
+        self.assertIn('Manual observation history',displayed)
+        self.assertIn('Manually checked fictitious authority',displayed)
+        self.assertIn('No second-human decision recorded',displayed)
+        self.assertNotIn('SECRET CAPTURE',displayed)
+        self.assertNotIn(self.reviewer,displayed)
+        self.assertNotIn(self.author,displayed)
+        self.assertNotIn('PRIVATE FICTITIOUS CASE',displayed)
+        self.assertEqual(displayed.count('\n')>4,True)
+        self.assertTrue(self.core.verify_audit())
+        self.root.event_generate('<Unmap>')
         self.root.update()
         self.assertFalse(dialog.winfo_exists())
 

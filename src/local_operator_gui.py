@@ -401,6 +401,28 @@ class LocalOperatorController:
             return {'title':title,'url':url,'excerpt':excerpt,
                     'source_verified':False,'legal_authority_verified':False}
 
+    def private_research_dossier(self, source_id):
+        """One authorization snapshot for source, observations and second reviews.
+
+        Historic notes and decisions are privacy-sensitive. All backend
+        integrity checks must pass before any text can be rendered.
+        """
+        with self.operator.core.authorized_transaction():
+            source=self.private_research_source(source_id)
+            observations=self.operator.workflow.observations.history(
+                self._token,self._matter_id,source_id)['observations']
+            reviews=self.operator.workflow.reviews.history(
+                self._token,self._matter_id,source_id)['second_reviews']
+            return {'source':source,
+                    'observations':tuple(
+                        {'recorded_at':x['recorded_at'],'note':x['note']}
+                        for x in observations[-20:]),
+                    'total_observations':len(observations),
+                    'reviews':tuple(
+                        {'recorded_at':x['recorded_at'],'decision':x['decision']}
+                        for x in reviews[-20:]),
+                    'total_reviews':len(reviews)}
+
     def _record_manual_research(self, kind, values):
         """One human-confirmed research write, one durable reservation.
 
@@ -797,6 +819,29 @@ class LocalOperatorController:
                 'Independent custody not verified. Do NOT repeat.')
         return ActionFeedback('observed_local_commit',
                               'Local review commit observed; independent custody not verified.')
+
+
+def _format_private_research_dossier(dossier):
+    """Private-only text: no record IDs, tokens or unsupported legal claims."""
+    source=dossier['source']
+    lines=['Title: '+source['title'],
+           'Website (not opened): '+source['url'], '',
+           'User-entered excerpt:',source['excerpt'], '',
+           'Manual observation history (latest 20 of '
+           +str(dossier['total_observations'])+'):']
+    if not dossier['observations']:
+        lines.append('No saved observations.')
+    for item in dossier['observations']:
+        lines.extend([item['recorded_at'], 'Human note: '+item['note'], ''])
+    lines.append('Second-human decisions (latest 20 of '
+                 +str(dossier['total_reviews'])+'):')
+    if not dossier['reviews']:
+        lines.append('No second-human decision recorded.')
+    for item in dossier['reviews']:
+        lines.extend([item['recorded_at'],'Decision: '+item['decision'], ''])
+    lines.extend(['', 'Local record integrity checked; NOT authenticated legal '
+                  'authority or independent custody.'])
+    return '\n'.join(lines)
 
 
 def launch_gui(core, token, *, run_mainloop=True):
@@ -1451,12 +1496,12 @@ def launch_gui(core, token, *, run_mainloop=True):
         dialog=tk.Toplevel(root)
         dialog.title('Saved research source — read only')
         dialog.transient(root)
-        dialog.geometry('620x440')
+        dialog.geometry('680x500')
         dialog.minsize(480,320)
         private_forms.append(dialog)
         form=ttk.Frame(dialog,padding=10)
         form.pack(fill='both',expand=True)
-        ttk.Label(form,text='Fictional user-entered source — NOT verified law',
+        ttk.Label(form,text='Fictional research and review history — NOT verified law',
                   wraplength=560).pack(anchor='w')
         chooser=ttk.Combobox(form,state='readonly',
                  values=tuple(label for _,label in named))
@@ -1481,11 +1526,8 @@ def launch_gui(core, token, *, run_mainloop=True):
             if (index<0 or index>=len(named)
                     or chooser.get()!=named[index][1]):
                 raise Denied('Source selection changed')
-            source=controller.private_research_source(named[index][0])
-            readable=('Title: '+source['title']+'\\n'
-                      'Website (not opened): '+source['url']+'\\n\\n'
-                      'User-entered excerpt:\\n'+source['excerpt']+'\\n\\n'
-                      'NOT authenticated legal authority.')
+            readable=_format_private_research_dossier(
+                controller.private_research_dossier(named[index][0]))
             selected['id']=named[index][0]
             selected['text']=readable
             detail.configure(state='normal')
@@ -1501,11 +1543,8 @@ def launch_gui(core, token, *, run_mainloop=True):
             if (idx<0 or idx>=len(named) or selected['id']!=named[idx][0]
                     or chooser.get()!=named[idx][1]):
                 raise Denied('Research selection changed')
-            source=controller.private_research_source(selected['id'])
-            expected=('Title: '+source['title']+'\\n'
-                      'Website (not opened): '+source['url']+'\\n\\n'
-                      'User-entered excerpt:\\n'+source['excerpt']+'\\n\\n'
-                      'NOT authenticated legal authority.')
+            expected=_format_private_research_dossier(
+                controller.private_research_dossier(selected['id']))
             if expected!=selected['text']:
                 raise Denied('Research text changed')
         def choose(event=None):
