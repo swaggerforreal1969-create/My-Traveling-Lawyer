@@ -134,6 +134,24 @@ class V2TransportTests(unittest.TestCase):
         with self.assertRaises(Denied):self.read(max_events=2)
         with self.assertRaises(Denied):self.read(max_events=0)
 
+
+    def test_untrusted_predecessor_signer_id_rejected_before_exchange(self):
+        for signer in ("", "invalid signer", "?"*81, None, False):
+            with self.subTest(signer=signer), self.assertRaises(Denied):
+                NonceBoundCustodyClientV2(
+                    transport=self.wire,
+                    predecessor=PinnedCheckpoint(PIN.sequence,PIN.digest,signer),
+                    verify_signature=verify)
+        self.assertEqual(self.calls, [])
+
+    def test_invalid_predecessor_signer_never_admits_operation(self):
+        with self.assertRaises(Denied):
+            NonceBoundCustodyClientV2(
+                transport=self.wire,
+                predecessor=PinnedCheckpoint(PIN.sequence,PIN.digest,"not approved"),
+                verify_signature=verify)
+        self.assertNotIn("v2_admit", self.calls)
+
     def test_transport_authentication_is_contract_not_real_independence(self):
         with self.assertRaises(Denied):
             AuthenticatedCustodyTransport(
