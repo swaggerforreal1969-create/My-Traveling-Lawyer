@@ -365,6 +365,40 @@ class LocalOperatorController:
             raise EvidenceInvalid('Research selections ambiguous')
         return tuple(result)
 
+    def private_research_source(self, source_id):
+        """Reauthorize and integrity-check one saved source for private display.
+
+        This is read-only local fictional evidence, never verified law.
+        No source text or opaque identifier enters root status or logging.
+        """
+        if self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        if (type(source_id) is not str or len(source_id) != 32
+                or any(ch not in '0123456789abcdef' for ch in source_id)):
+            raise Invalid('Invalid private source selection')
+        import hashlib
+        import json
+        with self._core.authorized_transaction():
+            sources=self.operator.workflow.evidence.list(
+                self._token,self._matter_id)['sources']
+            matches=[x for x in sources if x.get('id')==source_id]
+            if len(matches)!=1:
+                raise Denied('Saved research source not available')
+            item=matches[0]
+            try:
+                title,url,excerpt=item['title'],item['url'],item['excerpt']
+                digest=hashlib.sha256(json.dumps(
+                    [title,url,excerpt],separators=(',',':')).encode()).hexdigest()
+                if digest!=item['content_digest']:
+                    raise EvidenceInvalid('Saved research source integrity changed')
+                if (type(title) is not str or type(url) is not str
+                        or type(excerpt) is not str):
+                    raise EvidenceInvalid('Saved research source invalid')
+            except (KeyError,TypeError,ValueError) as exc:
+                raise EvidenceInvalid('Saved research source unavailable') from exc
+            return {'title':title,'url':url,'excerpt':excerpt,
+                    'source_verified':False,'legal_authority_verified':False}
+
     def _record_manual_research(self, kind, values):
         """One human-confirmed research write, one durable reservation.
 
@@ -910,6 +944,13 @@ def launch_gui(core, token, *, run_mainloop=True):
                     clear_all_visible_work()
                     status.set('Matter changed. Select it again after reauthorization.')
                     return
+            # A private saved-source view is valid only while the current
+            # account, matter, source identity and source digest still match.
+            # Never preserve its confidential text after a silent source change.
+            for private_form in private_forms[:]:
+                verifier=getattr(private_form,'private_source_check',None)
+                if callable(verifier) and private_form.winfo_exists():
+                    verifier()
             # An already displayed portfolio must not retain old counts after
             # an authorized matter-index/task-count change.
             existing = portfolio_text.get('1.0', 'end-1c')
@@ -1391,6 +1432,94 @@ def launch_gui(core, token, *, run_mainloop=True):
         fields[specifications[0][0]].focus_set()
 
 
+    def view_saved_source():
+        """Display one locally saved fictional excerpt without any network call."""
+        if write_confirmation['active'] or controller._matter_id is None:
+            status.set('Select an authorized matter before viewing saved research.')
+            return
+        try:
+            named=controller.identifiable_research_sources()
+            if not named:
+                status.set('No saved research source in this matter.')
+                return
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Research access denied. Reauthenticate.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Saved research source — read only')
+        dialog.transient(root)
+        dialog.geometry('620x440')
+        dialog.minsize(480,320)
+        private_forms.append(dialog)
+        form=ttk.Frame(dialog,padding=10)
+        form.pack(fill='both',expand=True)
+        ttk.Label(form,text='Fictional user-entered source — NOT verified law',
+                  wraplength=560).pack(anchor='w')
+        chooser=ttk.Combobox(form,state='readonly',
+                 values=tuple(label for _,label in named))
+        chooser.pack(fill='x',pady=5)
+        detail=tk.Text(form,wrap='word',height=14,undo=False)
+        detail.pack(fill='both',expand=True)
+        detail.configure(state='disabled')
+        bound_matter=controller._matter_id
+        selected={'id':None,'text':None}
+        def load_selection(event=None):
+            detail.configure(state='normal')
+            detail.delete('1.0','end')
+            detail.configure(state='disabled')
+            selected['id']=None
+            selected['text']=None
+            if controller._matter_id != bound_matter:
+                raise Denied('Matter selection changed')
+            fresh=controller.identifiable_research_sources()
+            if fresh!=named:
+                raise Denied('Source selections changed')
+            index=chooser.current()
+            if (index<0 or index>=len(named)
+                    or chooser.get()!=named[index][1]):
+                raise Denied('Source selection changed')
+            source=controller.private_research_source(named[index][0])
+            readable=('Title: '+source['title']+'\\n'
+                      'Website (not opened): '+source['url']+'\\n\\n'
+                      'User-entered excerpt:\\n'+source['excerpt']+'\\n\\n'
+                      'NOT authenticated legal authority.')
+            selected['id']=named[index][0]
+            selected['text']=readable
+            detail.configure(state='normal')
+            detail.insert('1.0',readable)
+            detail.configure(state='disabled')
+        def private_source_check():
+            if controller._matter_id != bound_matter:
+                raise Denied('Research matter no longer authorized')
+            fresh=controller.identifiable_research_sources()
+            if fresh!=named:
+                raise Denied('Research source list changed')
+            idx=chooser.current()
+            if (idx<0 or idx>=len(named) or selected['id']!=named[idx][0]
+                    or chooser.get()!=named[idx][1]):
+                raise Denied('Research selection changed')
+            source=controller.private_research_source(selected['id'])
+            expected=('Title: '+source['title']+'\\n'
+                      'Website (not opened): '+source['url']+'\\n\\n'
+                      'User-entered excerpt:\\n'+source['excerpt']+'\\n\\n'
+                      'NOT authenticated legal authority.')
+            if expected!=selected['text']:
+                raise Denied('Research text changed')
+        def choose(event=None):
+            try:
+                load_selection()
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                clear_all_visible_work()
+                status.set('Private source hidden. Reauthorize before viewing.')
+        dialog.private_source_check=private_source_check
+        chooser.bind('<<ComboboxSelected>>',choose)
+        ttk.Button(form,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
+        chooser.current(0)
+        choose()
+        if dialog.winfo_exists():
+            chooser.focus_set()
+
     def allow_second_review_dialog():
         if write_confirmation['active'] or controller.has_recovery():
             status.set('Unresolved write or confirmation active. No permission change.')
@@ -1470,6 +1599,8 @@ def launch_gui(core, token, *, run_mainloop=True):
         command=lambda: research_entry('source'))
     research_menu.add_command(label='Record manual observation',
         command=lambda: research_entry('observation'))
+    research_menu.add_command(label='View saved source (read only)',
+        command=view_saved_source)
     root_menu.add_cascade(label='Research',menu=research_menu)
     root_menu.add_command(label='Allow second reviewer',command=allow_second_review_dialog)
 

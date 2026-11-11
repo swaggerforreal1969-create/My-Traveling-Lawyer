@@ -48,6 +48,31 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
             'SELECT count(*) FROM audit_chain WHERE action=?',(action,)).fetchone()[0]
 
 
+    def test_private_source_readback_authorized_and_integrity_checked(self):
+        self.select()
+        original=self.client.private_research_source(self.eid)
+        self.assertEqual(original['title'],'SECRET RESEARCH TITLE')
+        self.assertEqual(original['excerpt'],'SECRET EXCERPT')
+        self.assertFalse(original['source_verified'])
+        self.assertFalse(original['legal_authority_verified'])
+        self.assertNotIn('id',original)
+        self.assertTrue(self.core.verify_audit())
+        outsider=LocalOperatorController(self.core,self.outside)
+        outsider.list_matters()
+        with self.assertRaises(Invalid):
+            outsider.private_research_source(self.eid)
+        with self.assertRaises(Invalid):
+            self.client.private_research_source('not-an-id')
+        with self.assertRaises(Denied):
+            self.client.private_research_source('f'*32)
+
+    def test_private_source_readback_detects_tampered_excerpt(self):
+        self.select()
+        self.core.db.execute('UPDATE research_evidence SET excerpt=? WHERE id=?',
+                             ('TAMPERED FICTIONAL EXCERPT',self.eid))
+        with self.assertRaises(EvidenceInvalid):
+            self.client.private_research_source(self.eid)
+
     def test_explicit_matter_and_task_creation_and_reopen(self):
         fence = LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3')
         client = LocalOperatorController(self.core,self.author,durable_fence=fence)

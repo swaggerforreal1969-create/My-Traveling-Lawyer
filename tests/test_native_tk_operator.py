@@ -261,6 +261,46 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
 
 
 
+    def test_private_saved_source_view_clears_on_hide_and_revocation(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        self.assertEqual(research.entrycget(2,'label'),
+                         'View saved source (read only)')
+        research.invoke(2)
+        self.root.update()
+        forms=[x for x in self.root.winfo_children() if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(forms),1)
+        dialog=forms[0]
+        self.assertIn('read only',dialog.title())
+        private=[x for x in descendants(dialog) if isinstance(x,tk.Text)]
+        self.assertEqual(len(private),1)
+        self.assertIn('SECRET EXCERPT',private[0].get('1.0','end-1c'))
+        self.assertIn('NOT authenticated legal authority',
+                      private[0].get('1.0','end-1c'))
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.evidence_add'"
+        ).fetchone()[0],1)
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_private_saved_source_view_revocation_clears_content(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        research.invoke(2)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        self.assertTrue(dialog.winfo_exists())
+        self.core.revoke_token(self.reviewer)
+        self.root.privacy_check()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
     def test_real_multiline_research_source_and_observation_save(self):
         self.open(self.author)
         self.select_matter()
