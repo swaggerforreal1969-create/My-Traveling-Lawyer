@@ -105,6 +105,40 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         with self.assertRaises(EvidenceInvalid):
             self.client.private_research_dossier(self.eid)
 
+    def test_private_action_detail_identifies_exact_task_and_review(self):
+        self.select()
+        task=self.client.private_action_detail('task',0)
+        review=self.client.private_action_detail('review',0)
+        self.assertIn('SECRET PRIVATE TASK',task['text'])
+        self.assertEqual(review['title'],'SECRET RESEARCH TITLE')
+        self.assertIn('Manual observation',review['note'])
+        self.assertNotIn('actor_id',review)
+        self.assertNotIn('task_id',task)
+        self.assertNotIn('observation_id',review)
+        viewer=LocalOperatorController(self.core,self.viewer)
+        viewer.list_matters()
+        viewer.select(0)
+        with self.assertRaises((Denied,Invalid)):
+            viewer.private_action_detail('task',0)
+
+    def test_private_action_detail_fails_closed_on_stale_or_corrupt_records(self):
+        self.select()
+        self.core.db.execute('UPDATE tasks SET text=? WHERE id=?',
+                             ('UPDATED PRIVATE TASK',self.task['id']))
+        self.assertEqual(self.client.private_action_detail('task',0)['text'],
+                         'UPDATED PRIVATE TASK')
+        self.core.db.execute('UPDATE tasks SET version=version+1 WHERE id=?',
+                             (self.task['id'],))
+        with self.assertRaises(Stale):
+            self.client.private_action_detail('task',0)
+        self.client.list_matters()
+        self.client.select(0)
+        self.core.db.execute(
+            'UPDATE source_observation SET note=? WHERE observation_id=?',
+            ('TAMPERED NOTE',self.oid))
+        with self.assertRaises(EvidenceInvalid):
+            self.client.private_action_detail('review',0)
+
     def test_explicit_matter_and_task_creation_and_reopen(self):
         fence = LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3')
         client = LocalOperatorController(self.core,self.author,durable_fence=fence)

@@ -139,6 +139,60 @@ class LocalOperatorController:
             and self._durable_fence.is_pending()))
 
 
+    def private_action_detail(self, kind, position):
+        """Read one exact selectable work item under fresh authorization.
+
+        Read-only, no implicit grant: the stored position and identity must
+        match a fresh task/review queue in the same SQLite transaction.
+        """
+        if kind not in ('task', 'review') or type(position) is not int:
+            raise Invalid('Invalid work-item selection')
+        self._assert_no_uncertain_review()
+        if self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        selected=self._tasks if kind=='task' else self._reviews
+        if not 0<=position<len(selected):
+            raise Invalid('Select a current work item')
+        identity=selected[position]
+        core=self.operator.core
+        with core.authorized_transaction():
+            actor=core._identity(self._token)
+            core._role(actor,self._matter_id,('owner','editor'))
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+            if kind=='task':
+                current=self.operator.workflow.journey.workbench.matter(
+                    self._token,self._matter_id)
+                if not current['can_complete_tasks']:
+                    raise Denied('Task completion not authorized')
+                tasks=current['open_tasks']
+                if (position>=len(tasks) or
+                    (tasks[position]['task_id'],tasks[position]['version'])!=identity):
+                    raise Stale('Task changed; refresh before action')
+                item=tasks[position]
+                if (type(item['text']) is not str or
+                        type(item['user_entered_due_at']) is not str):
+                    raise Invalid('Invalid task details')
+                return {'kind':'task','identity':identity,
+                        'text':item['text'],
+                        'date':item['user_entered_due_at']}
+            queue=self.operator.reviewer_inbox(self._token,self._matter_id)['items']
+            if (position>=len(queue) or
+                (queue[position]['evidence_id'],queue[position]['observation_id'])!=identity):
+                raise Stale('Review changed; refresh before action')
+            evidence_id,observation_id=identity
+            dossier=self.private_research_dossier(evidence_id)
+            history=self.operator.workflow.observations.history(
+                self._token,self._matter_id,evidence_id)['observations']
+            latest=max(history,key=lambda x:(x['recorded_at'],x['observation_id']),
+                       default=None)
+            if latest is None or latest['observation_id']!=observation_id:
+                raise Stale('Review observation changed')
+            source=dossier['source']
+            return {'kind':'review','identity':identity,
+                    'title':source['title'],'url':source['url'],
+                    'note':latest['note']}
+
     def _create_authorized(self, kind, text, *, due_at=None):
         """Explicit local write with persistent conservative no-replay fencing.
 
@@ -821,6 +875,20 @@ class LocalOperatorController:
                               'Local review commit observed; independent custody not verified.')
 
 
+def _format_private_action_detail(detail):
+    """Never put private task/review text in the main window or log."""
+    if detail['kind']=='task':
+        return ('Task to complete:\\n'+detail['text']+'\\n\\n'
+                'User-entered date (NOT a court deadline): '
+                +detail['date']+'\\n\\n'
+                'Review the task before authorizing a single completion.')
+    return ('Second-human review of:\\n'+detail['title']+'\\n'
+            'Website (not opened): '+detail['url']+'\\n\\n'
+            'Existing human observation note:\\n'+detail['note']
+            +'\\n\\nThis is NOT verified legal authority. '
+            'Your decision will be recorded for this exact observation.')
+
+
 def _format_private_research_dossier(dossier):
     """Private-only text: no record IDs, tokens or unsupported legal claims."""
     source=dossier['source']
@@ -1170,8 +1238,12 @@ def launch_gui(core, token, *, run_mainloop=True):
                 clear_stale_actions()
                 return
             decision = choice.get()
+            detail=controller.private_action_detail('review',position)
+            if detail['identity']!=identity:
+                raise Stale('Selected review changed')
             if not messagebox.askyesno('Confirm second-human review',
-                                       'Record this one review? No automatic retry.'):
+                                       _format_private_action_detail(detail)
+                                       +'\\n\\nRecord this review? No automatic retry.'):
                 status.set('Cancelled; no write performed.')
                 return
             try:
@@ -1210,8 +1282,12 @@ def launch_gui(core, token, *, run_mainloop=True):
             except (IndexError, TypeError):
                 clear_stale_actions()
                 return
+            detail=controller.private_action_detail('task',position)
+            if detail['identity']!=identity:
+                raise Stale('Selected task changed')
             if not messagebox.askyesno('Confirm task completion',
-                                       'Complete this one task? No automatic retry.'):
+                                       _format_private_action_detail(detail)
+                                       +'\\n\\nComplete this task? No automatic retry.'):
                 status.set('Cancelled; no write performed.')
                 return
             try:
@@ -1644,6 +1720,47 @@ def launch_gui(core, token, *, run_mainloop=True):
         command=view_saved_source)
     root_menu.add_cascade(label='Research',menu=research_menu)
     root_menu.add_command(label='Allow second reviewer',command=allow_second_review_dialog)
+    def inspect_selected_action(kind):
+        """Private read-only examination of the exact selected task or review."""
+        widget=task_list if kind=='task' else review_list
+        if not widget.curselection():
+            status.set('Select a '+kind+' before opening private details.')
+            return
+        try:
+            position=widget.curselection()[0]
+            detail=controller.private_action_detail(kind,position)
+            rendered=_format_private_action_detail(detail)
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Work item changed or access denied. Reauthenticate.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Private '+kind+' details — read only')
+        dialog.transient(root)
+        dialog.geometry('620x380')
+        dialog.minsize(480,280)
+        private_forms.append(dialog)
+        holder=ttk.Frame(dialog,padding=10)
+        holder.pack(fill='both',expand=True)
+        content=tk.Text(holder,wrap='word',undo=False)
+        content.pack(fill='both',expand=True)
+        content.insert('1.0',rendered)
+        content.configure(state='disabled')
+        def verify_private_action():
+            if (tuple(widget.curselection())!=(position,)
+                or controller.private_action_detail(kind,position)!=detail):
+                raise Denied('Selected private work item changed')
+        dialog.private_source_check=verify_private_action
+        ttk.Button(holder,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
+        content.focus_set()
+
+    inspect_menu=tk.Menu(root,tearoff=False)
+    inspect_menu.add_command(label='Selected task (read only)',
+                             command=lambda: inspect_selected_action('task'))
+    inspect_menu.add_command(label='Selected review (read only)',
+                             command=lambda: inspect_selected_action('review'))
+    root_menu.add_cascade(label='Inspect',menu=inspect_menu)
+
 
     portfolio_button = ttk.Button(buttons,text='Workload (read only)',
                                   command=show_portfolio)

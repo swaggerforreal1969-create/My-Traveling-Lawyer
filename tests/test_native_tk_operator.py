@@ -325,6 +325,54 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.root.update()
         self.assertFalse(dialog.winfo_exists())
 
+    def test_private_selected_action_details_and_confirmations_show_real_work(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        self.assertEqual(menu.entrycget(3,'label'),'Inspect')
+        inspect.invoke(0)
+        self.root.update()
+        dialog=next(w for w in self.root.winfo_children()
+                    if isinstance(w,tk.Toplevel))
+        details=next(w for w in descendants(dialog) if isinstance(w,tk.Text))
+        self.assertIn('SECRET PRIVATE TASK',details.get('1.0','end-1c'))
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        with patch.object(messagebox,'askyesno',return_value=False) as confirm:
+            self.buttons['Complete task'].invoke()
+        self.assertEqual(confirm.call_count,1)
+        self.assertIn('SECRET PRIVATE TASK',confirm.call_args.args[1])
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],0)
+
+    def test_private_review_confirmation_shows_observation_and_does_not_write_on_cancel(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        self.listboxes[1].selection_set(0)
+        self.listboxes[1].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        note=next(w for w in self.texts if w.cget('height')==2)
+        note.insert('1.0','Fictional reviewer note long enough')
+        with patch.object(messagebox,'askyesno',return_value=False) as confirm:
+            self.buttons['Record review'].invoke()
+        self.assertEqual(confirm.call_count,1)
+        self.assertIn('SECRET SOURCE',confirm.call_args.args[1])
+        self.assertIn('Manually checked fictitious authority',
+                      confirm.call_args.args[1])
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.second_source_review'"
+        ).fetchone()[0],0)
+
     def test_real_multiline_research_source_and_observation_save(self):
         self.open(self.author)
         self.select_matter()
