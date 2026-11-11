@@ -105,6 +105,24 @@ class FictionalBackupRestoreAcceptance(unittest.TestCase):
                         [tuple(row) for row in recovered.db.execute(
                             'SELECT * FROM '+name+' ORDER BY rowid')], records)
 
+    def test_rec04_adversarial_loss_of_one_matter_owner_denies_backup(self):
+        # Explicit isolated ACL fixture: there is no published owner-transfer
+        # command. This is NOT evidence of a supported customer role change.
+        with SecureCoreContext(self.path) as core:
+            second = core.create_matter(
+                self.tokens['editor_token'], 'Fictional second owned matter')['id']
+            owner = core._identity(self.tokens['editor_token'])
+            with core.authorized_transaction():
+                removed = core.db.execute(
+                    'DELETE FROM grants WHERE matter_id=? AND user_id=? '
+                    "AND role='owner'", (second, owner['id']))
+                self.assertEqual(removed.rowcount, 1)
+            self.assertTrue(core.verify_audit())
+        with self.assertRaises(Denied):
+            backup_fictional_pilot(
+                self.path, self.tokens['editor_token'], self.archive)
+        self.assertFalse(self.archive.exists())
+
     def test_rec05_multi_firm_backup_denied_without_archive(self):
         with SecureCoreContext(self.path) as core:
             foreign_firm = core.provision_firm('Separate fictional practice')
