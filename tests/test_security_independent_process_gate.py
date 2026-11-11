@@ -838,7 +838,9 @@ finally:
             MatterBrief(self.core).prepare(self.owner,self.matter["id"])
 
     def test_source_projection_serializes_with_cross_process_acl_downgrade(self):
+        from src.research_evidence import ResearchEvidence
         from src.source_release_projection import SourceReleaseProjection
+        ResearchEvidence(self.core)
         original=self.core._role
         outcomes=[]
         def role_then_downgrade(identity,matter_id,allowed):
