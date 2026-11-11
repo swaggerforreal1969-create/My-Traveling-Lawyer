@@ -6,27 +6,61 @@ on:
 permissions:
   contents: read
 jobs:
-  write-admission-races:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 12
+  linux-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Confirm exact source
+      - name: Confirm exact source SHA
         shell: bash
         env:
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          echo "EXACT_SHA_VERIFIED=$EXPECTED_SHA"
-      - name: Run actual separate-process authorization races
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_SHA"
+          echo "EXACT_SHA_VERIFIED=$actual"
+      - name: Independent-process authorization race tests
         run: python -m unittest discover -s tests -p test_security_independent_process_gate.py -v
+      - name: Existing secure engine regressions
+        run: python -m unittest discover -s tests -p test_secure_engine.py -v
+      - name: Existing secure HTTP regressions
+        run: python -m unittest discover -s tests -p test_secure_http.py -v
+      - name: Source manifest gate unit tests
+        run: python -m unittest discover -s tests -p test_source_manifest_gate.py -v
+      - name: Restricted-source audit fixture tests
+        run: python -m unittest discover -s tests -p test_offline_restricted_source_audit.py -v
+  windows-security:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Confirm exact source SHA
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $env:EXPECTED_SHA) { throw "EXACT_SHA_MISMATCH" }
+          Write-Output "EXACT_SHA_VERIFIED=$actual"
+      - name: Independent-process authorization race tests
+        run: python -m unittest discover -s tests -p test_security_independent_process_gate.py -v
+      - name: Existing secure engine regressions
+        run: python -m unittest discover -s tests -p test_secure_engine.py -v
+      - name: Existing secure HTTP regressions
+        run: python -m unittest discover -s tests -p test_secure_http.py -v
+      - name: Source manifest gate unit tests
+        run: python -m unittest discover -s tests -p test_source_manifest_gate.py -v
+      - name: Restricted-source audit fixture tests
+        run: python -m unittest discover -s tests -p test_offline_restricted_source_audit.py -v
