@@ -32,7 +32,7 @@ class MatterBrief:
         if not isinstance(now, datetime) or now.tzinfo is None:
             raise EvidenceInvalid('Timezone-aware briefing time required')
         at = now.astimezone(timezone.utc).isoformat()
-        with self.core.lock:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             self.core._role(actor, matter_id, ('owner', 'editor', 'viewer'))
             matter = self.core.db.execute(

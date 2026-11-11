@@ -26,7 +26,7 @@ class SourceReleaseProjection:
         """
         if not isinstance(matter_id, str) or not 1 <= len(matter_id) <= 64:
             raise EvidenceInvalid('Invalid matter identifier')
-        with self.core.lock:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             self.core._role(actor, matter_id, ('owner', 'editor', 'viewer'))
             evidence_ids = [r['id'] for r in self.core.db.execute(
