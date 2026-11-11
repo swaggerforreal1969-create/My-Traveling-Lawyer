@@ -168,6 +168,40 @@ class LocalOperatorController:
             and self._durable_fence.is_pending()))
 
 
+    def private_completed_tasks(self):
+        """Reauthorize and inspect completed tasks without granting write access.
+
+        Completed rows must have a matching, verified local task.complete
+        audit record. This is not independently witnessed finality.
+        """
+        if self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        core=self.operator.core
+        with core.authorized_transaction():
+            actor=core._identity(self._token)
+            core._role(actor,self._matter_id,('owner','editor','viewer'))
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+            rows=core.db.execute(
+                'SELECT id,text,due_at FROM tasks WHERE matter_id=? '
+                'AND completed=1 ORDER BY due_at,id LIMIT 102',
+                (self._matter_id,)).fetchall()
+            if len(rows)>100:
+                raise Invalid('Too many completed tasks; pagination required')
+            result=[]
+            for row in rows:
+                if (type(row['text']) is not str or
+                        not 1<=len(row['text'])<=200 or
+                        type(row['due_at']) is not str):
+                    raise Invalid('Invalid completed task details')
+                proof=core.db.execute(
+                    "SELECT 1 FROM audit_chain WHERE action='task.complete' "
+                    'AND target=? LIMIT 1',(row['id'],)).fetchone()
+                if proof is None:
+                    raise Denied('Completed task missing local audit record')
+                result.append((row['text'],row['due_at']))
+            return tuple(result)
+
     def private_action_detail(self, kind, position):
         """Read one exact selectable work item under fresh authorization.
 
@@ -902,6 +936,19 @@ class LocalOperatorController:
                 'Independent custody not verified. Do NOT repeat.')
         return ActionFeedback('observed_local_commit',
                               'Local review commit observed; independent custody not verified.')
+
+
+def _format_private_completed_tasks(rows):
+    """Read-only fictional task history, without raw row IDs."""
+    lines=['Completed tasks — local record only',
+           'User-entered dates are NOT verified court deadlines.',
+           'Local audit checked; external custody NOT verified.','']
+    if not rows:
+        lines.append('No completed tasks in this matter.')
+    for i,(title,due_at) in enumerate(rows,1):
+        lines.extend([str(i)+'. '+title,
+                      'User-entered date: '+due_at,''])
+    return '\\n'.join(lines)
 
 
 def _format_private_action_detail(detail):
@@ -1828,6 +1875,38 @@ def launch_gui(core, token, *, run_mainloop=True):
         ttk.Button(holder,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
         text.focus_set()
 
+    def inspect_completed_tasks():
+        """Inspect locally completed work without a completion command."""
+        if controller._matter_id is None:
+            status.set('Select a matter before inspecting completed tasks.')
+            return
+        bound_matter=controller._matter_id
+        try:
+            rows=controller.private_completed_tasks()
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Completed-task history unavailable. Reauthenticate.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Completed tasks — read only')
+        dialog.transient(root)
+        dialog.geometry('650x430')
+        dialog.minsize(470,280)
+        private_forms.append(dialog)
+        holder=ttk.Frame(dialog,padding=10)
+        holder.pack(fill='both',expand=True)
+        detail=tk.Text(holder,wrap='word',undo=False)
+        detail.pack(fill='both',expand=True)
+        detail.insert('1.0',_format_private_completed_tasks(rows))
+        detail.configure(state='disabled')
+        def verify_completed_history():
+            if (controller._matter_id!=bound_matter or
+                    controller.private_completed_tasks()!=rows):
+                raise Denied('Completed task history or authorization changed')
+        dialog.private_source_check=verify_completed_history
+        ttk.Button(holder,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
+        detail.focus_set()
+
     inspect_menu=tk.Menu(root,tearoff=False)
     inspect_menu.add_command(label='Selected matter (read only)',
                              command=inspect_selected_matter)
@@ -1835,6 +1914,8 @@ def launch_gui(core, token, *, run_mainloop=True):
                              command=lambda: inspect_selected_action('task'))
     inspect_menu.add_command(label='Selected review (read only)',
                              command=lambda: inspect_selected_action('review'))
+    inspect_menu.add_command(label='Completed tasks (read only)',
+                             command=inspect_completed_tasks)
     root_menu.add_cascade(label='Inspect',menu=inspect_menu)
 
 

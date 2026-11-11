@@ -78,6 +78,36 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
         with self.assertRaises(Stale):
             self.client.private_matter_detail(0)
 
+    def test_private_completed_history_real_write_audit_and_restart(self):
+        self.select()
+        self.assertEqual(self.client.private_completed_tasks(),())
+        before=self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0]
+        self.core.complete_task(self.reviewer,self.task['id'],1,
+                                expected_matter_id=self.mid)
+        history=self.client.private_completed_tasks()
+        self.assertEqual(history,(('SECRET PRIVATE TASK',self.task['due_at']),))
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0],before+1)
+        self.assertTrue(self.core.verify_audit())
+        self.core.close()
+        self.core=SecureCore(Path(self.tmp.name)/'fictional.sqlite3')
+        reopened=LocalOperatorController(self.core,self.reviewer)
+        reopened.list_matters()
+        reopened.select(0)
+        self.assertEqual(reopened.private_completed_tasks(),history)
+
+    def test_private_completed_history_denies_other_firm_and_unwitnessed_row(self):
+        self.select()
+        other=LocalOperatorController(self.core,self.outside)
+        other.list_matters()
+        with self.assertRaises(Invalid):
+            other.private_completed_tasks()
+        self.core.db.execute(
+            'UPDATE tasks SET completed=1 WHERE id=?',(self.task['id'],))
+        with self.assertRaises(Denied):
+            self.client.private_completed_tasks()
+
     def test_private_source_readback_authorized_and_integrity_checked(self):
         self.select()
         original=self.client.private_research_source(self.eid)

@@ -325,6 +325,54 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.root.update()
         self.assertFalse(dialog.winfo_exists())
 
+    def test_native_completed_task_history_after_real_completion(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        task_id=self.core.db.execute(
+            'SELECT id FROM tasks WHERE matter_id=?',(self.mid,)).fetchone()['id']
+        self.core.complete_task(self.reviewer,task_id,1,
+                                expected_matter_id=self.mid)
+        self.root.privacy_check()
+        self.root.update()
+        # Task list was invalidated by the mutation. Select the matter again.
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        self.assertEqual(inspect.entrycget(3,'label'),
+                         'Completed tasks (read only)')
+        # An authorized matter must be reselected after privacy invalidation.
+        self.listboxes[0].selection_set(0)
+        self.listboxes[0].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        self.buttons['Select matter'].invoke()
+        self.root.update()
+        inspect.invoke(3)
+        self.root.update()
+        dialog=next(w for w in self.root.winfo_children()
+                    if isinstance(w,tk.Toplevel))
+        detail=next(w for w in descendants(dialog) if isinstance(w,tk.Text))
+        self.assertIn('SECRET PRIVATE TASK',detail.get('1.0','end-1c'))
+        self.assertIn('external custody NOT verified',
+                      detail.get('1.0','end-1c'))
+        self.assertEqual(self.listboxes[2].size(),0)
+        self.assertTrue(self.core.verify_audit())
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_native_completed_history_revocation_purges_private_view(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        inspect.invoke(3)
+        self.root.update()
+        dialog=next(w for w in self.root.winfo_children()
+                    if isinstance(w,tk.Toplevel))
+        self.core.revoke_token(self.reviewer)
+        self.root.privacy_check()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
     def test_private_matter_preview_before_selection_and_hide_purges(self):
         self.open(self.reviewer)
         self.listboxes[0].selection_set(0)
