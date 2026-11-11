@@ -386,13 +386,13 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
                 code = (
                     "import sqlite3,sys; from hashlib import sha256; "
                     "c=sqlite3.connect(sys.argv[1],timeout=.25,isolation_level=None); "
-                    "c.execute('PRAGMA busy_timeout=250')\\n"
-                    "try:\\n"
+                    "c.execute('PRAGMA busy_timeout=250')\n"
+                    "try:\n"
                     " cur=c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',"
                     "(sha256(sys.argv[2].encode()).hexdigest(),)); "
-                    " print('COMMITTED' if cur.rowcount==1 else 'MISSING')\\n"
-                    "except sqlite3.OperationalError as e:\\n"
-                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
+                    " print('COMMITTED' if cur.rowcount==1 else 'MISSING')\n"
+                    "except sqlite3.OperationalError as e:\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\n"
                     "finally: c.close()"
                 )
                 child = subprocess.run(
@@ -435,13 +435,13 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
                 code = (
                     "import sqlite3,sys; from hashlib import sha256; "
                     "c=sqlite3.connect(sys.argv[1],timeout=.25,isolation_level=None); "
-                    "c.execute('PRAGMA busy_timeout=250')\\n"
-                    "try:\\n"
+                    "c.execute('PRAGMA busy_timeout=250')\n"
+                    "try:\n"
                     " cur=c.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',"
                     "(sha256(sys.argv[2].encode()).hexdigest(),)); "
-                    " print('COMMITTED' if cur.rowcount==1 else 'MISSING')\\n"
-                    "except sqlite3.OperationalError as e:\\n"
-                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\\n"
+                    " print('COMMITTED' if cur.rowcount==1 else 'MISSING')\n"
+                    "except sqlite3.OperationalError as e:\n"
+                    " print('BUSY' if 'locked' in str(e).lower() else 'ERROR')\n"
                     "finally: c.close()"
                 )
                 child = subprocess.run(
@@ -471,6 +471,50 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
             self.assertTrue(revoked)
             self.assertEqual(self.core.audit_head()["seq"], before["seq"] + 1)
         self.assertTrue(self.core.verify_audit())
+
+
+    def test_offline_recovery_code_is_consumed_once_across_processes(self):
+        """A recovery code can create only one replacement session."""
+        code = self.core.issue_recovery_code(self.owner)
+        child_success = "\\n".join([
+            "import sys",
+            "from src.secure_engine import SecureCore",
+            "c=SecureCore(sys.argv[1])",
+            "c.recover_offline(sys.argv[2],sys.argv[3])",
+            "c.close()",
+            "print('PASS')",
+        ])
+        self.child(child_success, self.owner_id, code)
+        child_denied = "\\n".join([
+            "import sys",
+            "from src.secure_engine import SecureCore, Denied",
+            "c=SecureCore(sys.argv[1])",
+            "try:",
+            " c.recover_offline(sys.argv[2],sys.argv[3])",
+            "except Denied:",
+            " print('DENIED')",
+            "else:",
+            " raise AssertionError('RECOVERY_CODE_REUSED')",
+            "finally:",
+            " c.close()",
+        ])
+        env = dict(os.environ)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        result = subprocess.run(
+            [sys.executable, "-c", child_denied, str(self.path), self.owner_id, code],
+            cwd=str(Path(__file__).resolve().parents[1]), env=env,
+            capture_output=True, text=True, timeout=25, check=False)
+        self.assertEqual(result.returncode, 0, "Second recovery child failed (redacted)")
+        self.assertEqual(result.stdout.strip(), "DENIED")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM recovery_codes WHERE user_id=? AND used=0",
+            (self.owner_id,)).fetchone()[0], 0)
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM credentials WHERE user_id=? AND revoked=0",
+            (self.owner_id,)).fetchone()[0], 1)
+        self.assertTrue(self.core.verify_audit())
+        self.assertEqual(self.core.audit_head()["seq"], 2)
 
 if __name__ == "__main__":
     unittest.main()
