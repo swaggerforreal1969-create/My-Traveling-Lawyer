@@ -16,9 +16,14 @@ from .secure_engine import Denied
 
 _CERT = re.compile(r"^[0-9a-f]{64}$")
 _HOST = re.compile(r"^[a-zA-Z0-9.-]{1,253}$")
-_PATHS = {"admit": "/v1/custody/admit",
-          "read_head": "/v1/custody/head",
-          "read_event": "/v1/custody/event"}
+_V1_PATHS = {"admit": "/v1/custody/admit",
+             "read_head": "/v1/custody/head",
+             "read_event": "/v1/custody/event"}
+# Contract-only v2 route shapes; actual provider routes require external approval.
+_V2_PATHS = {"v2_admit": "/v2/custody/admit",
+             "v2_read_latest": "/v2/custody/latest",
+             "v2_read_head_at": "/v2/custody/head-at"}
+_V2_SCHEMA = "mtl.custody.nonce-bound.v2"
 
 
 def _reject_nonfinite(value):
@@ -44,7 +49,11 @@ class PinnedHTTPSCustodyAdapter:
     """
 
     def __init__(self, *, endpoint=None, certificate_sha256=None,
-                 enabled=False, timeout_seconds=5):
+                 enabled=False, timeout_seconds=5, protocol_version="v1"):
+        if type(protocol_version) is not str or protocol_version not in ("v1", "v2"):
+            raise Denied("Unrecognized custody protocol")
+        self._paths = _V1_PATHS if protocol_version == "v1" else _V2_PATHS
+        self._protocol_version = protocol_version
         self._enabled = enabled is True
         self._host = None
         self._certificate_sha256 = None
@@ -92,8 +101,10 @@ class PinnedHTTPSCustodyAdapter:
     def __call__(self, operation, body):
         if not self._enabled or self._host is None:
             raise Denied("External custody is disabled")
-        if operation not in _PATHS or type(body) is not dict:
+        if operation not in self._paths or type(body) is not dict:
             raise Denied("Invalid custody operation")
+        if self._protocol_version == "v2" and body.get("schema") != _V2_SCHEMA:
+            raise Denied("Version-two custody schema required")
         try:
             payload=json.dumps(body,sort_keys=True,
                                separators=(",",":"),allow_nan=False).encode("utf-8")
@@ -114,7 +125,7 @@ class PinnedHTTPSCustodyAdapter:
                     or hashlib.sha256(certificate).hexdigest()!=
                        self._certificate_sha256):
                 raise Denied("Custody server certificate pin mismatch")
-            conn.request("POST",_PATHS[operation],body=payload,headers={
+            conn.request("POST",self._paths[operation],body=payload,headers={
                 "Content-Type":"application/json",
                 "Accept":"application/json",
                 "Cache-Control":"no-store",
