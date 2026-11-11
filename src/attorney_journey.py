@@ -44,7 +44,11 @@ class AttorneyJourney:
             raise JourneyRejected('Unsafe or mismatched matter state')
 
     def open(self, token, matter_id, *, now=None):
-        # Readiness and workbench authorization both run; neither can be skipped.
+        # Component reads share one cross-process authorization snapshot.
+        with self.workbench.core.authorized_transaction():
+            return self._open_authorized(token, matter_id, now=now)
+
+    def _open_authorized(self, token, matter_id, *, now=None):
         view = self.workbench.matter(token, matter_id, now=now)
         self._validate_workbench(view, matter_id)
         response = self.readiness.prepare(token, matter_id, now=now)

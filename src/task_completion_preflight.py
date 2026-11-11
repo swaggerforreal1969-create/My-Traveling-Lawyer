@@ -25,7 +25,7 @@ def prepare_completion(core, token, matter_id, task_id, expected_version):
     No matter title, task text, due date, legal assertion, or credential is
     returned. A preflight never constitutes one-use authorization or a lock.
     """
-    with core.lock:
+    with core.authorized_transaction():
         if (not isinstance(matter_id, str) or not 1 <= len(matter_id) <= 64
                 or not isinstance(task_id, str) or not 1 <= len(task_id) <= 64
                 or type(expected_version) is not int or expected_version < 1):

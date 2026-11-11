@@ -88,7 +88,7 @@ class AttorneyResearchWorkflow:
         titles, notes or URLs. This snapshot is advisory: review.record must
         re-check the latest version and current authorization at commit time.
         """
-        with self.core.lock:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             self.core._role(actor, matter_id, ('owner', 'editor'))
             if not self.core.verify_audit():
@@ -128,7 +128,7 @@ class AttorneyResearchWorkflow:
         the same BEGIN IMMEDIATE transaction. Never retry after an uncertain
         post-write refresh.
         """
-        with self.core.lock:
+        with self.core.authorized_transaction():
             inbox = self.pending_second_reviews(token, matter_id)
             if not any(item['evidence_id'] == evidence_id
                        and item['observation_id'] == observation_id

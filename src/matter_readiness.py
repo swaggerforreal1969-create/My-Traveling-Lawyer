@@ -26,7 +26,7 @@ class MatterReadiness:
         """Fail closed: never present stale or incomplete projections as court-ready."""
         if now is not None and (not isinstance(now, datetime) or now.tzinfo is None):
             raise EvidenceInvalid('Timezone-aware reference time required')
-        with self.core.lock:
+        with self.core.authorized_transaction():
             brief = self.briefing.prepare(token, matter_id, now=now)
             disposition = self.sources.project(token, matter_id)
             if (brief.get('matter_id') != disposition.get('matter_id') or

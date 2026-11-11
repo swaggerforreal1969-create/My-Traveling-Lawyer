@@ -40,7 +40,7 @@ def reconcile_research_write(core, token, matter_id, operation, record_id):
             or any(c not in '0123456789abcdef' for c in record_id)):
         raise Invalid('Invalid research reconciliation request')
     table, key, action = _TARGETS[operation]
-    with core.lock:
+    with core.authorized_transaction():
         actor = core._identity(token)
         core._role(actor, matter_id, ('owner', 'editor'))
         row = core.db.execute(

@@ -41,7 +41,7 @@ class PrivateMatterPortfolio:
 
     def inspect(self, token, *, now=None):
         core = self.operator.core
-        with core.lock:
+        with core.authorized_transaction():
             before = self.operator.matters(token)
             if (type(before) is not dict
                     or type(before.get('matters')) is not list

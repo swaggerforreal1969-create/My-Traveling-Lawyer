@@ -80,7 +80,7 @@ class SecondSourceReview:
                 raise
 
     def history(self, token, matter_id, evidence_id):
-        with self.core.lock:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             self.core._role(actor, matter_id, ('owner', 'editor', 'viewer'))
             # Read-only integrity validation; viewer cannot add a countersignature.
