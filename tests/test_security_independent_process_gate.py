@@ -238,6 +238,7 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
         self.core._identity = identity_then_revoke
         try:
             before = self.core.db.execute("SELECT count(*) FROM matters").fetchone()[0]
+            audit_before = self.core.audit_head()
             try:
                 self.core.create_matter(self.owner, "STALE OWNER MATTER")
                 created = True
@@ -250,9 +251,12 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
         if outcomes[0] == "COMMITTED":
             self.assertFalse(created, "REVOKED OWNER CREATED MATTER")
             self.assertEqual(after, before)
+            self.assertEqual(self.core.audit_head(), audit_before)
         else:
             self.assertEqual(outcomes[0], "BUSY")
             self.assertTrue(created)
+            self.assertEqual(self.core.audit_head()["seq"], audit_before["seq"] + 1)
+        self.assertTrue(self.core.verify_audit())
 
     def test_cross_process_acl_downgrade_between_role_and_create_task(self):
         """A committed editor downgrade must not be followed by task creation."""
@@ -283,6 +287,7 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
         self.core._role = role_then_downgrade
         try:
             before = self.core.db.execute("SELECT count(*) FROM tasks").fetchone()[0]
+            audit_before = self.core.audit_head()
             try:
                 self.core.create_task(self.editor, self.matter["id"],
                                       "STALE EDITOR TASK", "2026-12-01T00:00:00Z")
@@ -296,9 +301,12 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
         if outcomes[0] == "COMMITTED":
             self.assertFalse(created, "DOWNGRADED EDITOR CREATED TASK")
             self.assertEqual(after, before)
+            self.assertEqual(self.core.audit_head(), audit_before)
         else:
             self.assertEqual(outcomes[0], "BUSY")
             self.assertTrue(created)
+            self.assertEqual(self.core.audit_head()["seq"], audit_before["seq"] + 1)
+        self.assertTrue(self.core.verify_audit())
 
     def test_cross_process_revocation_between_identity_and_token_rotation(self):
         """A completed revocation must not be followed by minting a new session."""
@@ -332,6 +340,7 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
             before = self.core.db.execute(
                 "SELECT count(*) FROM credentials WHERE user_id=? AND revoked=0",
                 (self.owner_id,)).fetchone()[0]
+            audit_before = self.core.audit_head()
             try:
                 self.core.rotate_token(self.owner)
                 rotated = True
@@ -346,9 +355,12 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
         if outcomes[0] == "COMMITTED":
             self.assertFalse(rotated, "REVOKED SESSION MINTED A NEW TOKEN")
             self.assertEqual(after, before - 1)
+            self.assertEqual(self.core.audit_head(), audit_before)
         else:
             self.assertEqual(outcomes[0], "BUSY")
             self.assertTrue(rotated)
+            self.assertEqual(self.core.audit_head()["seq"], audit_before["seq"] + 1)
+        self.assertTrue(self.core.verify_audit())
 
 
     def test_audit_row_deletion_is_detected(self):
@@ -514,7 +526,7 @@ class IndependentProcessSecurityAcceptance(unittest.TestCase):
             "SELECT count(*) FROM credentials WHERE user_id=? AND revoked=0",
             (self.owner_id,)).fetchone()[0], 1)
         self.assertTrue(self.core.verify_audit())
-        self.assertEqual(self.core.audit_head()["seq"], 2)
+        self.assertEqual(self.core.audit_head()["seq"], 4)
 
 if __name__ == "__main__":
     unittest.main()
