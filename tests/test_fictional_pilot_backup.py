@@ -78,6 +78,44 @@ class FictionalBackupRestoreAcceptance(unittest.TestCase):
             self.assertFalse(LocalWriteFence(self.restored).is_pending())
         self.assertEqual(raw,self.archive.read_bytes())
 
+    def test_rec01_two_owned_matters_exact_record_restore_after_restart(self):
+        with SecureCoreContext(self.path) as core:
+            original = core.db.execute('SELECT id FROM matters').fetchone()['id']
+            second = core.create_matter(
+                self.tokens['editor_token'], 'Second fictional owned matter')['id']
+            core.create_task(self.tokens['editor_token'], second,
+                             'Separate fictional client task',
+                             '2031-01-01T00:00:00Z')
+            expected = {
+                name: [tuple(row) for row in core.db.execute(
+                    'SELECT * FROM '+name+' ORDER BY rowid')]
+                for name in ('matters', 'grants', 'tasks', 'audit_chain')
+            }
+            self.assertEqual({row[0] for row in expected['matters']},
+                             {original, second})
+            self.assertTrue(core.verify_audit())
+        backup_fictional_pilot(self.path, self.tokens['editor_token'], self.archive)
+        restore_fictional_pilot(self.archive, self.restored)
+        # Open a NEW SQLite connection after restore has completed.
+        with SecureCoreContext(self.restored) as recovered:
+            self.assertTrue(recovered.verify_audit())
+            for name, records in expected.items():
+                with self.subTest(table=name):
+                    self.assertEqual(
+                        [tuple(row) for row in recovered.db.execute(
+                            'SELECT * FROM '+name+' ORDER BY rowid')], records)
+
+    def test_rec05_multi_firm_backup_denied_without_archive(self):
+        with SecureCoreContext(self.path) as core:
+            foreign_firm = core.provision_firm('Separate fictional practice')
+            _, outsider = core.provision_user(foreign_firm, 'Outside attorney')
+            core.create_matter(outsider, 'Different fictional firm matter')
+            self.assertTrue(core.verify_audit())
+        with self.assertRaises(Denied):
+            backup_fictional_pilot(
+                self.path, self.tokens['editor_token'], self.archive)
+        self.assertFalse(self.archive.exists())
+
     def test_no_overwrite_of_source_archive_or_destination(self):
         backup_fictional_pilot(self.path,self.tokens['editor_token'],self.archive)
         original=self.archive.read_bytes()
