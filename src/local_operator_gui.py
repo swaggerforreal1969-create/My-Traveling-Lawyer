@@ -1,7 +1,9 @@
 """Offline Tkinter attorney operator: actual mouse/keyboard UI, no HTTP.
 
 All sensitive commands delegate to PrivateAttorneyOperator / SecureCore. The UI
-never displays client notes, excerpts, task text, URLs, token or record IDs.
+never shows client notes, excerpts, task text, URLs, tokens or IDs in
+its main window. An explicitly opened private research dialog can display
+authorized fictional source text; it is cleared on hiding or access failure.
 Only experimental local SQLite databases, never real-client production use.
 Tkinter is loaded on launch, not during headless test/import.
 """
