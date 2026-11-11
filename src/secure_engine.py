@@ -305,7 +305,8 @@ class SecureCore:
                 raise
 
     def verify_audit(self):
-        with self.lock:
+        """Verify one stable audit-chain snapshot across independent processes."""
+        with self.authorized_transaction():
             previous='GENESIS'
             expected_seq=1
             for row in self.db.execute('SELECT * FROM audit_chain ORDER BY seq'):
@@ -449,8 +450,8 @@ class SecureCore:
             return {'task_id':task_id,'version':expected_version+1,'completed':True}
 
     def audit_head(self):
-        # Local audit head; not independently durable by itself.
-        with self.lock:
+        # Verification and head retrieval share one cross-process snapshot.
+        with self.authorized_transaction():
             if not self.verify_audit(): raise Invalid('Audit verification failed')
             row=self.db.execute('SELECT seq,row_hash FROM audit_chain ORDER BY seq DESC LIMIT 1').fetchone()
             return {'schema':'mtl.audit.head.v1','seq':row['seq'] if row else 0,

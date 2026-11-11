@@ -17,7 +17,7 @@ class SecondSourceReview:
     def __init__(self, core):
         self.core = core
         self.observations = SourceObservation(core)
-        with core.lock, core.db:
+        with core.authorized_transaction():
             core.db.execute('''CREATE TABLE IF NOT EXISTS source_second_review (
                 id TEXT PRIMARY KEY, matter_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
                 observation_id TEXT NOT NULL UNIQUE, original_actor_id TEXT NOT NULL,

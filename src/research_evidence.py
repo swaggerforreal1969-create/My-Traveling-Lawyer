@@ -12,7 +12,7 @@ class EvidenceInvalid(ValueError):
 class ResearchEvidence:
     def __init__(self, core):
         self.core=core
-        with core.lock, core.db:
+        with core.authorized_transaction():
             core.db.execute('''CREATE TABLE IF NOT EXISTS research_evidence (
               id TEXT PRIMARY KEY, matter_id TEXT NOT NULL, author_id TEXT NOT NULL,
               title TEXT NOT NULL, url TEXT NOT NULL, excerpt TEXT NOT NULL,

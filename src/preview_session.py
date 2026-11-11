@@ -21,7 +21,7 @@ class PreviewSessionBroker:
     def __init__(self, core, gateway=None):
         self.core = core
         self.gateway = gateway if gateway is not None else MobilePreviewGateway(core)
-        with core.lock, core.db:
+        with core.authorized_transaction():
             core.db.execute('''CREATE TABLE IF NOT EXISTS preview_ticket (
                 ticket_digest TEXT PRIMARY KEY,
                 credential_digest TEXT NOT NULL,

@@ -20,7 +20,7 @@ class SourceObservation:
 
     def __init__(self, core):
         self.core = core
-        with core.lock, core.db:
+        with core.authorized_transaction():
             core.db.execute('''CREATE TABLE IF NOT EXISTS source_observation (
                 observation_id TEXT PRIMARY KEY, matter_id TEXT NOT NULL,
                 evidence_id TEXT NOT NULL, actor_id TEXT NOT NULL,

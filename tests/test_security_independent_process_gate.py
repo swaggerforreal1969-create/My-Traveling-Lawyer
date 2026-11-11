@@ -872,5 +872,33 @@ finally:
             AttorneyResearchWorkflow(self.core).pending_second_reviews(
                 self.editor,self.matter["id"])
 
+
+    def test_audit_head_verification_and_head_read_share_one_cross_process_snapshot(self):
+        original=self.core.verify_audit
+        outcomes=[]
+        import hashlib
+        digest=hashlib.sha256(self.owner.encode()).hexdigest()
+        def verify_then_competing_writer():
+            valid=original()
+            outcomes.append(self._competing_sql(
+                "UPDATE credentials SET last_seen_at=last_seen_at WHERE token_digest=?",
+                digest))
+            return valid
+        self.core.verify_audit=verify_then_competing_writer
+        try:
+            head=self.core.audit_head()
+        finally:
+            self.core.verify_audit=original
+        self.assertEqual(outcomes,["BUSY"],
+                         "A separate process wrote between audit verification and head retrieval")
+        self.assertEqual(head["seq"],0)
+        self.assertEqual(head["row_hash"],"GENESIS")
+        self.assertTrue(original())
+        self.child(
+            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+            "c.execute('UPDATE credentials SET last_seen_at=last_seen_at WHERE token_digest=?',(sys.argv[2],)); "
+            "c.commit(); c.close(); print('PASS')",digest)
+        self.assertEqual(self.core.audit_head()["seq"],0)
+
 if __name__ == "__main__":
     unittest.main()
