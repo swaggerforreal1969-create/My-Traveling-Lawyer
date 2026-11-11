@@ -328,23 +328,16 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
     def test_native_completed_task_history_after_real_completion(self):
         self.open(self.reviewer)
         self.select_matter()
-        task_id=self.core.db.execute(
-            'SELECT id FROM tasks WHERE matter_id=?',(self.mid,)).fetchone()['id']
-        self.core.complete_task(self.reviewer,task_id,1,
-                                expected_matter_id=self.mid)
-        self.root.privacy_check()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
         self.root.update()
-        # Task list was invalidated by the mutation. Select the matter again.
+        with patch.object(messagebox,'askyesno',return_value=True):
+            self.buttons['Complete task'].invoke()
+        self.root.update()
         menu=self.root.nametowidget(self.root.cget('menu'))
         inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
         self.assertEqual(inspect.entrycget(3,'label'),
                          'Completed tasks (read only)')
-        # An authorized matter must be reselected after privacy invalidation.
-        self.listboxes[0].selection_set(0)
-        self.listboxes[0].event_generate('<<ListboxSelect>>')
-        self.root.update()
-        self.buttons['Select matter'].invoke()
-        self.root.update()
         inspect.invoke(3)
         self.root.update()
         dialog=next(w for w in self.root.winfo_children()

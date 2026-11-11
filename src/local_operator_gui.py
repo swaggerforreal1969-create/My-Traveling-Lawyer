@@ -948,7 +948,7 @@ def _format_private_completed_tasks(rows):
     for i,(title,due_at) in enumerate(rows,1):
         lines.extend([str(i)+'. '+title,
                       'User-entered date: '+due_at,''])
-    return '\\n'.join(lines)
+    return '\n'.join(lines)
 
 
 def _format_private_action_detail(detail):
