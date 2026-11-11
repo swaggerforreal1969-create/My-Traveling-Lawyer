@@ -1,0 +1,35 @@
+name: MTL PR110 independent-process authorization race probes
+on:
+  push:
+    branches:
+      - engineering/security-write-admission-audit-20261110
+  pull_request:
+    branches:
+      - engineering/pr97-atomic-grant-revocation-20261110
+permissions:
+  contents: read
+jobs:
+  write-admission-races:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: \${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: \${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Confirm exact source
+        shell: bash
+        env:
+          EXPECTED_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "EXACT_SHA_VERIFIED=$EXPECTED_SHA"
+      - name: Run actual separate-process authorization races
+        run: python -m unittest discover -s tests -p test_security_independent_process_gate.py -v
