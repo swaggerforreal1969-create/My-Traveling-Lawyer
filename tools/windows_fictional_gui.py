@@ -3,6 +3,8 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
+# PyInstaller must see the GUI statically; offline_pilot imports it dynamically.
+from src.local_operator_gui import launch_gui  # noqa: F401
 
 TITLE = "My Traveling Lawyer — Fictional Practice"
 

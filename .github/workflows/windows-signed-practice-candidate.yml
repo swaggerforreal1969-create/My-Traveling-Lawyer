@@ -1,0 +1,67 @@
+name: Windows candidate focused native build (NOT A RELEASE)
+on:
+  push:
+    branches:
+      - release/windows-signed-practice-candidate-20261112
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  focused-windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Focused source and safe-file checks
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p test_windows_build_candidate.py -v
+          python -m unittest discover -s tests -p test_store_msix_preparation.py -v
+      - name: Build standalone UNSIGNED exe only
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pyinstaller==6.16.0
+          ./tools/build_signed_windows.ps1 -BuildOnly
+      - name: Inspect real frozen binaries and dependency
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $exe="dist/MyTravelingLawyer-Practice/MyTravelingLawyer-Practice.exe"
+          if (!(Test-Path $exe)) { throw "No frozen EXE produced" }
+          $status=(Get-AuthenticodeSignature $exe).Status
+          if ($status -eq "Valid") { throw "Unexpected signature on unsigned development EXE" }
+          $toc=Get-Content "build/MyTravelingLawyer-Practice/Analysis-00.toc" -Raw
+          if ($toc -notmatch "src.local_operator_gui") { throw "Frozen build omitted actual attorney GUI" }
+          Write-Output "FROZEN_EXE_PRESENT=YES"
+          Write-Output "AUTHENTICODE_STATUS=$status"
+          Write-Output "EXE_SHA256=$((Get-FileHash $exe -Algorithm SHA256).Hash)"
+          Write-Output "ATTORNEY_GUI_IN_FROZEN_IMPORTS=YES"
+          Write-Output "SMART_APP_CONTROL=NOT_TESTED"
+      - name: Verify Windows EXE opens a native GUI window
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $exe=(Resolve-Path "dist/MyTravelingLawyer-Practice/MyTravelingLawyer-Practice.exe").Path
+          $p=Start-Process -FilePath $exe -PassThru
+          try {
+            Start-Sleep -Seconds 5
+            $p.Refresh()
+            if ($p.HasExited) { throw "Frozen program exited early" }
+            if ($p.MainWindowHandle -eq 0) { throw "No native window observed" }
+            Write-Output "FROZEN_GUI_WINDOW_OPENED=YES"
+          } finally {
+            if (!$p.HasExited) {
+              [void]$p.CloseMainWindow()
+              if (!$p.WaitForExit(5000)) { Stop-Process -Id $p.Id -Force }
+            }
+          }
+      - name: Private UNSIGNED inspection artifact (never for evaluator)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtl-practice-UNSIGNED-DO-NOT-DISTRIBUTE
+          path: dist/MyTravelingLawyer-Practice/
+          retention-days: 1
+          if-no-files-found: error

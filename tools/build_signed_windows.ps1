@@ -1,5 +1,5 @@
 # Developer-only build, not authorization to distribute. Never disable Smart App Control.
-param([Parameter(Mandatory=$true)][string]$TrustedCertificateThumbprint, [switch]$BuildOnly)
+param([string]$TrustedCertificateThumbprint, [switch]$BuildOnly)
 $ErrorActionPreference="Stop"
 Set-StrictMode -Version Latest
 if (!(Test-Path "tools/windows_fictional_gui.py")) { throw "Run from repository root" }
@@ -8,6 +8,7 @@ if ($LASTEXITCODE -ne 0) { throw "Windows EXE build failed" }
 $root="dist/MyTravelingLawyer-Practice"
 if (!(Test-Path "$root/MyTravelingLawyer-Practice.exe")) { throw "EXE missing" }
 if ($BuildOnly) { Write-Host "UNSIGNED; do NOT give this to an evaluator."; exit 0 }
+if ([string]::IsNullOrWhiteSpace($TrustedCertificateThumbprint)) { throw "Approved trusted signing certificate thumbprint required; NOT SIGNED" }
 $cert=Get-ChildItem "Cert:\CurrentUser\My","Cert:\LocalMachine\My" |
   Where-Object { $_.Thumbprint -eq $TrustedCertificateThumbprint -and $_.HasPrivateKey } |
   Select-Object -First 1
