@@ -55,6 +55,19 @@ def choose_case(root):
     if name:
         open_case(root,name)
 
+def show_practice_help(root):
+    """Plain-language instructions for fictional, offline practice only."""
+    messagebox.showinfo(
+        TITLE,
+        "1. Choose Create Practice Case to make a new practice file.\n"
+        "2. Save both access codes somewhere private. They will not appear again.\n"
+        "3. Choose Open Practice Case to open an existing practice file.\n"
+        "4. Only use made-up information. Never enter real client details.\n"
+        "5. The second reviewer's code belongs to another authorized person.\n"
+        "6. If you see an uncertain result, stop. Do not repeat the action.\n"
+        "7. Select Close when finished.",
+        parent=root)
+
 def main():
     root=tk.Tk()
     root.title(TITLE)
@@ -64,6 +77,7 @@ def main():
     tk.Label(root,text="Practice only. Never use real client information.").pack(pady=(0,16))
     tk.Button(root,text="Create Practice Case",width=28,height=2,command=lambda:create_case(root)).pack(pady=5)
     tk.Button(root,text="Open Practice Case",width=28,height=2,command=lambda:choose_case(root)).pack(pady=5)
+    tk.Button(root,text="Practice Help",width=28,command=lambda:show_practice_help(root)).pack(pady=3)
     tk.Button(root,text="Close",command=root.destroy).pack(pady=10)
     root.mainloop()
 if __name__=="__main__":
