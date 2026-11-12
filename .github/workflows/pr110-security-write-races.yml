@@ -5,6 +5,10 @@ on:
       - engineering/security-write-admission-audit-20261110
 permissions:
   contents: read
+concurrency:
+  group: mtl-pr110-security-write-races-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux-security:
     runs-on: ubuntu-latest
@@ -25,6 +29,13 @@ jobs:
           actual="$(git rev-parse HEAD)"
           test "$actual" = "$EXPECTED_SHA"
           echo "EXACT_SHA_VERIFIED=$actual"
+      - name: Fail fast if restricted secure HTTP source is unavailable (BLOCKED not PASS)
+        shell: bash
+        run: |
+          if [ ! -f src/secure_server.py ]; then
+            echo "::error title=BLOCKED_REQUIRED_RESTRICTED_SOURCE::src/secure_server.py absent; independent security clearance remains NO-GO"
+            exit 1
+          fi
       - name: V2 pinned custody transport trust validation
         run: python -m unittest discover -s tests -p test_v2_custody_transport.py -v
       - name: Offline pinned HTTPS v2 integration tests
@@ -62,6 +73,13 @@ jobs:
           $actual = (git rev-parse HEAD).Trim()
           if ($actual -ne $env:EXPECTED_SHA) { throw "EXACT_SHA_MISMATCH" }
           Write-Output "EXACT_SHA_VERIFIED=$actual"
+      - name: Fail fast if restricted secure HTTP source is unavailable (BLOCKED not PASS)
+        shell: pwsh
+        run: |
+          if (!(Test-Path "src/secure_server.py")) {
+            Write-Output "::error title=BLOCKED_REQUIRED_RESTRICTED_SOURCE::src/secure_server.py absent; independent security clearance remains NO-GO"
+            throw "BLOCKED_REQUIRED_RESTRICTED_SOURCE"
+          }
       - name: V2 pinned custody transport trust validation
         run: python -m unittest discover -s tests -p test_v2_custody_transport.py -v
       - name: Offline pinned HTTPS v2 integration tests

@@ -8,6 +8,10 @@ on:
       - engineering/pr95-zero-cost-semgrep-zap-guardrails-20261110
 permissions:
   contents: read
+concurrency:
+  group: mtl-pr97-grant-revocation-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   executable-security-boundaries:
     strategy:

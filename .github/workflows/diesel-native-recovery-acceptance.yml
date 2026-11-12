@@ -8,6 +8,10 @@ on:
       - .github/workflows/diesel-native-recovery-acceptance.yml
 permissions:
   contents: read
+concurrency:
+  group: mtl-diesel-native-recovery-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   real-recovery-then-frozen-build:
     runs-on: windows-latest

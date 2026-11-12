@@ -3,6 +3,8 @@ on:
   push:
     branches:
       - engineering/**
+    paths-ignore:
+      - 'docs/**'
   pull_request:
     branches:
       - engineering/real-research-task-journey-20261103

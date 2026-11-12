@@ -6,6 +6,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: mtl-windows-signed-practice-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   focused-windows-build:
     runs-on: windows-latest

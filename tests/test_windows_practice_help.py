@@ -14,7 +14,9 @@ class PracticeHelpAcceptance(unittest.TestCase):
             text=args[1]
             for phrase in ("Create Practice Case","Open Practice Case",
                            "access codes","made-up information",
-                           "second reviewer","uncertain result","Close"):
+                           "second reviewer","uncertain result","Close",
+                           "Back Up Practice Case","Restore Practice Backup",
+                           "not encrypted","NEW file"):
                 self.assertIn(phrase.lower(),text.lower())
             self.assertIn("Never enter real client details",text)
 

@@ -8,6 +8,10 @@ on:
       - engineering/pr94-atomic-attorney-writes-20261110
 permissions:
   contents: read
+concurrency:
+  group: mtl-pr95-free-semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   local-semgrep:
     runs-on: ubuntu-latest

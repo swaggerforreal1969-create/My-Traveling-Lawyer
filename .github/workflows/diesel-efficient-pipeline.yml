@@ -2,10 +2,11 @@ name: Diesel staged efficient CI (isolated, no new services)
 on:
   push:
     branches:
-      - diesel/mtl-efficient-pipeline-20261112
+      - diesel/mtl-repository-efficiency-20261112
     paths:
-      - .github/workflows/diesel-efficient-pipeline.yml
+      - '.github/workflows/**'
       - tools/diesel_ci_preflight.py
+      - tests/test_repository_workflow_guard.py
       - tests/test_diesel_ci_preflight.py
       - docs/DIESEL_CUSTOMER_QUEUE.json
       - docs/DIESEL_EFFICIENCY_WORKFLOW.md
@@ -38,7 +39,9 @@ jobs:
           python-version: '3.11'
       - name: Verify deterministic preflight before expensive runner
         shell: bash
-        run: python -m unittest discover -s tests -p test_diesel_ci_preflight.py -v
+        run: |
+          python -m unittest discover -s tests -p test_diesel_ci_preflight.py -v
+          python -m unittest discover -s tests -p test_repository_workflow_guard.py -v
       - name: Assess exact SHA, scoped changed files, restricted source, and customer queue
         id: plan
         shell: bash
