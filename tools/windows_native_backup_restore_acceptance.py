@@ -3,7 +3,7 @@
 No mocking of real backup/restore/authorization engine; dialogs use a scoped
 scripted choice to prevent any real user input. No codes printed/artifacted.
 """
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -15,6 +15,14 @@ from src.offline_pilot import initialize_fictional_pilot
 from src.secure_engine import SecureCore, Denied
 from src.durable_local_write_fence import LocalWriteFence
 
+@contextmanager
+def core_session(path):
+    core=SecureCore(path)
+    try:
+        yield core
+    finally:
+        core.close()
+
 def run():
     with TemporaryDirectory(prefix="mtl-native-recovery-") as folder:
         folder=Path(folder)
@@ -24,7 +32,7 @@ def run():
         accounts=initialize_fictional_pilot(original)
         editor=accounts["editor_token"]
         reviewer=accounts["reviewer_token"]
-        with SecureCore(original) as core:
+        with core_session(original) as core:
             second=core.create_matter(editor,"Second invented matter")
             core.create_task(editor,second["id"],"Second invented task","2031-02-01T00:00:00Z")
             assert core.verify_audit()
@@ -93,7 +101,7 @@ def run():
                     assert not any(t in (editor,reviewer) for t in new_tokens)
                     assert not errors, "Restore raised an error"
                     observed.append("REAL_NATIVE_RESTORE_NEW_CODES")
-                    with SecureCore(restored) as recovered:
+                    with core_session(restored) as recovered:
                         assert recovered.verify_audit()
                         for table,rows in expected.items():
                             assert [tuple(r) for r in recovered.db.execute(
