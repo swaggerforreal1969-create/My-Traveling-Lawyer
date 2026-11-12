@@ -1,0 +1,65 @@
+name: Diesel efficient CI preflight (isolated no-cost pilot)
+on:
+  push:
+    branches:
+      - diesel/mtl-efficient-pipeline-20261112
+    paths:
+      - .github/workflows/diesel-efficient-pipeline.yml
+      - tools/diesel_ci_preflight.py
+      - tests/test_diesel_ci_preflight.py
+      - docs/DIESEL_CUSTOMER_QUEUE.json
+      - docs/DIESEL_EFFICIENCY_WORKFLOW.md
+permissions:
+  contents: read
+concurrency:
+  group: mtl-efficient-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  low-cost-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      windows_required: ${{ steps.plan.outputs.windows_required }}
+      source_changed: ${{ steps.plan.outputs.source_changed }}
+      security_state: ${{ steps.plan.outputs.security_state }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify deterministic preflight before expensive runner
+        shell: bash
+        run: python -m unittest discover -s tests -p test_diesel_ci_preflight.py -v
+      - name: Assess exact SHA, scoped changed files, restricted source, and customer queue
+        id: plan
+        shell: bash
+        run: |
+          python -m tools.diesel_ci_preflight --out "${{ runner.temp }}/diesel-efficiency-proof.json"
+      - name: Retain one compact plan without credentials or unsigned EXE
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diesel-efficiency-preflight
+          path: ${{ runner.temp }}/diesel-efficiency-proof.json
+          retention-days: 7
+          if-no-files-found: warn
+  windows-on-change-only:
+    needs: low-cost-preflight
+    if: needs.low-cost-preflight.outputs.windows_required == 'true' && needs.low-cost-preflight.outputs.source_changed == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Windows real native customer recovery check when related source changes
+        shell: pwsh
+        run: |
+          python -m tools.windows_native_backup_restore_acceptance
+          if ($LASTEXITCODE -ne 0) { throw "ACTUAL_RECOVERY_DENIED" }

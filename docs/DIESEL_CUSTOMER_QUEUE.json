@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "release": "NO_GO",
+  "recurring_enabled": false,
+  "priority": "customer-acceptance",
+  "tasks": [
+    {
+      "id": "RECOVERY-NATIVE",
+      "state": "VERIFIED",
+      "source_sha": "b25fc1df65acd55e03ee77b193187e81d70bd21d",
+      "evidence": "43329708911",
+      "next": "Do not repeat unchanged native source checks"
+    },
+    {
+      "id": "FROZEN-RECOVERY-UI",
+      "state": "UNRESOLVED",
+      "next": "Exercise actual packaged EXE backup and restore controls end-to-end, not only the Tk source"
+    },
+    {
+      "id": "WINDOWS-TRUST",
+      "state": "BLOCKED",
+      "next": "Wait for approved Microsoft signing identity and genuine SAC-on test"
+    },
+    {
+      "id": "SECURITY-INDEPENDENT",
+      "state": "BLOCKED",
+      "next": "Restricted secure_server.py absent from published sources and qualified independent reviewer missing"
+    }
+  ]
+}
