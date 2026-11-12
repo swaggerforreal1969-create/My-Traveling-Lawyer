@@ -5,6 +5,7 @@ from tkinter import filedialog, messagebox, simpledialog
 from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
 # PyInstaller must see the GUI statically; offline_pilot imports it dynamically.
 from src.local_operator_gui import launch_gui  # noqa: F401
+from src.fictional_pilot_backup import backup_fictional_pilot
 
 TITLE = "My Traveling Lawyer — Fictional Practice"
 
@@ -55,6 +56,45 @@ def choose_case(root):
     if name:
         open_case(root,name)
 
+def backup_case(root):
+    """Make one authenticated, credential-free fictional backup. Never overwrite."""
+    database = filedialog.askopenfilename(
+        parent=root, title="Choose practice case to back up",
+        filetypes=[("Practice file", "*.sqlite3")])
+    if not database:
+        return
+    destination = filedialog.asksaveasfilename(
+        parent=root, title="Save practice backup as",
+        defaultextension=".json",
+        filetypes=[("Practice backup", "*.json")])
+    if not destination:
+        return
+    path = Path(destination)
+    if path.exists() or path.is_symlink():
+        messagebox.showerror(TITLE, "Backup file already exists. No changes were made.", parent=root)
+        return
+    token = simpledialog.askstring(
+        TITLE, "Practice owner access code (hidden):", show="*", parent=root)
+    if not token:
+        return
+    try:
+        result = backup_fictional_pilot(Path(database), token, path)
+    except Exception:
+        messagebox.showerror(
+            TITLE,
+            "Backup denied or unavailable. Nothing was confirmed as saved. "
+            "Do not overwrite an existing file or retry an uncertain write.",
+            parent=root)
+        return
+    finally:
+        del token
+    messagebox.showinfo(
+        TITLE,
+        "Practice backup saved. It is not encrypted. Keep it private. "
+        "Do not use real client information. Independently check your saved file.",
+        parent=root)
+
+
 def show_practice_help(root):
     """Plain-language instructions for fictional, offline practice only."""
     messagebox.showinfo(
@@ -71,13 +111,14 @@ def show_practice_help(root):
 def main():
     root=tk.Tk()
     root.title(TITLE)
-    root.geometry("440x290")
+    root.geometry("440x365")
     root.resizable(False,False)
     tk.Label(root,text="My Traveling Lawyer",font=("Segoe UI",19,"bold")).pack(pady=(20,8))
     tk.Label(root,text="Practice only. Never use real client information.").pack(pady=(0,16))
     tk.Button(root,text="Create Practice Case",width=28,height=2,command=lambda:create_case(root)).pack(pady=5)
     tk.Button(root,text="Open Practice Case",width=28,height=2,command=lambda:choose_case(root)).pack(pady=5)
     tk.Button(root,text="Practice Help",width=28,command=lambda:show_practice_help(root)).pack(pady=3)
+    tk.Button(root,text="Back Up Practice Case",width=28,command=lambda:backup_case(root)).pack(pady=3)
     tk.Button(root,text="Close",command=root.destroy).pack(pady=10)
     root.mainloop()
 if __name__=="__main__":
