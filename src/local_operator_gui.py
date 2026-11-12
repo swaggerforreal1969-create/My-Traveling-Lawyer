@@ -17,6 +17,7 @@ from .secure_engine import SecureCore, Denied, Invalid, Stale
 from .research_evidence import EvidenceInvalid
 from .attorney_research_workflow import RefreshUnresolved
 from .durable_local_write_fence import LocalWriteFence
+from .research_correction import ResearchCorrection
 
 
 @dataclass(frozen=True)
@@ -572,9 +573,13 @@ class LocalOperatorController:
                 self._token,self._matter_id,source_id)['observations']
             reviews=self.operator.workflow.reviews.history(
                 self._token,self._matter_id,source_id)['second_reviews']
+            links=ResearchCorrection(self.operator.core).history(
+                self._token,self._matter_id,source_id)['corrections']
+            correction_reasons={x['new_id']:x['reason'] for x in links}
             return {'source':source,
                     'observations':tuple(
-                        {'recorded_at':x['recorded_at'],'note':x['note']}
+                        {'recorded_at':x['recorded_at'],'note':x['note'],
+                         'correction_reason':correction_reasons.get(x['observation_id'])}
                         for x in observations[-20:]),
                     'total_observations':len(observations),
                     'reviews':tuple(
@@ -609,7 +614,7 @@ class LocalOperatorController:
                 entries = self.available_research_sources()
                 if record_id not in entries:
                     raise Denied('Saved source not visible after authorization')
-            else:
+            elif kind == 'observation':
                 source_id, captured, note = values
                 made = self.operator.workflow.observations.capture(
                     self._token, self._matter_id, source_id, captured, note)
@@ -619,6 +624,19 @@ class LocalOperatorController:
                 if not any(x['observation_id'] == record_id
                            for x in history['observations']):
                     raise Denied('Saved observation not visible after authorization')
+            elif kind == 'correction':
+                source_id, old_id, captured, note, reason = values
+                correction = ResearchCorrection(core)
+                made = correction.record(self._token, self._matter_id, source_id,
+                                         old_id, captured, note, reason)
+                record_id = made['observation_id']
+                links = correction.history(self._token, self._matter_id,
+                                            source_id)['corrections']
+                if not any(x['new_id'] == record_id and x['old_id'] == old_id
+                           for x in links):
+                    raise Denied('Correction readback unverified')
+            else:
+                raise Invalid('Unrecognized manual research operation')
             if not core.verify_audit():
                 raise Denied('Local audit check failed after write')
             self._durable_fence.finish_confirmed(
@@ -632,7 +650,7 @@ class LocalOperatorController:
                     'Research saved and verified, but display refresh failed. '
                     'Do NOT repeat; reopen read only.')
             return ActionFeedback(kind + '_recorded',
-                ('Source' if kind == 'source' else 'Manual observation') +
+                ('Source' if kind == 'source' else 'Correction' if kind == 'correction' else 'Manual observation') +
                 ' saved. Research is NOT verified legal authority.')
         except Exception:
             # Unknown post-reservation outcome is never a safe replay invitation.
@@ -660,6 +678,34 @@ class LocalOperatorController:
             raise Denied('Source is not in currently authorized matter')
         return self._record_manual_research(
             'observation', (source_id, captured.strip(), note.strip()))
+
+    def latest_research_observation(self, source_id):
+        if source_id not in self.available_research_sources():
+            raise Denied('Source unavailable for correction')
+        ResearchCorrection(self.operator.core).history(
+            self._token,self._matter_id,source_id)
+        entries = self.operator.workflow.observations.history(
+            self._token,self._matter_id,source_id)['observations']
+        latest = max(entries, key=lambda x:(x['recorded_at'],x['observation_id']),
+                     default=None)
+        if latest is None:
+            raise Invalid('No observation exists to correct')
+        return latest['observation_id']
+
+    def correct_research_observation(self, source_id, old_id, captured,
+                                     note, reason, confirmed):
+        if not confirmed:
+            return ActionFeedback('cancelled','Cancelled; no write performed.')
+        if not isinstance(captured,str) or not 1 <= len(captured.strip()) <= 12000:
+            raise Invalid('Corrected observation required')
+        if not isinstance(note,str) or not 12 <= len(note.strip()) <= 1200:
+            raise Invalid('Corrected note must be 12–1200 characters')
+        if not isinstance(reason,str) or not 15 <= len(reason.strip()) <= 1200:
+            raise Invalid('Correction reason must be 15–1200 characters')
+        if self.latest_research_observation(source_id) != old_id:
+            raise Stale('Earlier observation changed')
+        return self._record_manual_research(
+            'correction',(source_id,old_id,captured.strip(),note.strip(),reason.strip()))
 
     def review(self, position, decision, note, confirmed):
         if not confirmed:
@@ -1018,7 +1064,12 @@ def _format_private_research_dossier(dossier):
     if not dossier['observations']:
         lines.append('No saved observations.')
     for item in dossier['observations']:
-        lines.extend([item['recorded_at'], 'Human note: '+item['note'], ''])
+        lines.extend([item['recorded_at'], 'Human note: '+item['note']])
+        if item.get('correction_reason'):
+            lines.extend(['CORRECTION — original entry remains on record.',
+                          'Reason: '+item['correction_reason'],
+                          'Requires a new independent second review.'])
+        lines.append('')
     lines.append('Second-human decisions (latest 20 of '
                  +str(dossier['total_reviews'])+'):')
     if not dossier['reviews']:
@@ -1839,6 +1890,97 @@ def launch_gui(core, token, *, run_mainloop=True):
         dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
         choices.focus_set()
 
+    def correct_latest_observation_dialog():
+        """Private fictional correction with reauthorization after confirmation."""
+        if write_confirmation['active'] or controller.has_recovery():
+            status.set('Unresolved write or confirmation active. No correction.')
+            return
+        if controller._matter_id is None:
+            status.set('Select an authorized matter before correcting research.')
+            return
+        try:
+            named = controller.identifiable_research_sources()
+            if not named:
+                status.set('Record an observation before correcting it.')
+                return
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Research correction access denied.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Correct latest observation')
+        dialog.transient(root)
+        dialog.geometry('650x580')
+        dialog.minsize(480,420)
+        private_forms.append(dialog)
+        form=ttk.Frame(dialog,padding=10)
+        form.pack(fill='both',expand=True)
+        ttk.Label(form,text='Fictional research only. The original is kept; '
+                  'a different human must review the new record.',
+                  wraplength=570).pack(anchor='w')
+        chooser=ttk.Combobox(form,state='readonly',
+                 values=tuple(label for _,label in named))
+        chooser.current(0)
+        chooser.pack(fill='x')
+        fields=[]
+        for label in ('Corrected fictional observation text',
+                      'Updated human note (12–1200 characters)',
+                      'Reason for correction (15–1200 characters)'):
+            ttk.Label(form,text=label).pack(anchor='w')
+            field=tk.Text(form,height=5,wrap='word',undo=False)
+            field.pack(fill='both',expand=True)
+            fields.append(field)
+        initial_matter=controller._matter_id
+        def save_correction():
+            if write_confirmation['active']:
+                return
+            write_confirmation['active']=True
+            try:
+                idx=chooser.current()
+                if (controller._matter_id!=initial_matter or
+                    idx<0 or idx>=len(named) or
+                    chooser.get()!=named[idx][1] or
+                    controller.identifiable_research_sources()!=named):
+                    raise Stale('Research source changed')
+                source_id=named[idx][0]
+                old_id=controller.latest_research_observation(source_id)
+                captured,note,reason=tuple(
+                    field.get('1.0','end-1c') for field in fields)
+                if not messagebox.askyesno('Confirm research correction',
+                     'Save a corrected version for '+named[idx][1]+
+                     '? The original stays saved. Another person must review '
+                     'the new version.',parent=dialog):
+                    return
+                if (controller._matter_id!=initial_matter or
+                    controller.has_recovery() or chooser.current()!=idx or
+                    chooser.get()!=named[idx][1] or
+                    controller.identifiable_research_sources()!=named or
+                    controller.latest_research_observation(source_id)!=old_id):
+                    raise Stale('Source or observation changed while confirming')
+                result=controller.correct_research_observation(
+                    source_id,old_id,captured,note,reason,True)
+                for field in fields:
+                    field.delete('1.0','end')
+                dialog.destroy()
+                status.set(result.message)
+                if result.status=='correction_recorded':
+                    display_counts()
+                    status.set('Correction saved. Independent second review required.')
+                else:
+                    clear_stale_actions()
+                    messagebox.showwarning('Research correction unresolved',
+                                           result.message,parent=root)
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                status.set('Correction rejected. No new write authorized.')
+            finally:
+                write_confirmation['active']=False
+                update_controls()
+        ttk.Button(form,text='Save correction',
+                   command=save_correction).pack(side='left',pady=8)
+        ttk.Button(form,text='Cancel',command=dialog.destroy).pack(side='right',pady=8)
+        dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
+        fields[0].focus_set()
+
     research_menu=tk.Menu(root,tearoff=False)
     research_menu.add_command(label='Add manual source',
         command=lambda: research_entry('source'))
@@ -1846,6 +1988,8 @@ def launch_gui(core, token, *, run_mainloop=True):
         command=lambda: research_entry('observation'))
     research_menu.add_command(label='View saved source (read only)',
         command=view_saved_source)
+    research_menu.add_command(label='Correct latest observation',
+        command=correct_latest_observation_dialog)
     root_menu.add_cascade(label='Research',menu=research_menu)
     root_menu.add_command(label='Allow second reviewer',command=allow_second_review_dialog)
     def inspect_selected_action(kind):
@@ -2019,7 +2163,9 @@ def launch_gui(core, token, *, run_mainloop=True):
             'The program does not check the website.\n\n'
             '5. Open Research > Record manual observation to add a note '
             'about that source. Click Save manual entry only when ready.\n\n'
-            '6. Open Research > View saved source (read only) to inspect '
+            '6. Use Research > Correct latest observation to fix a mistaken '
+            'entry without deleting the original. A new review is needed. '
+            'Open Research > View saved source (read only) to inspect 
             'the saved source and research history.\n\n'
             '7. The matter owner may choose Allow second reviewer. '
             'A different authorized account records a decision with '

@@ -637,6 +637,45 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         from src.durable_local_write_fence import LocalWriteFence
         self.assertFalse(LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3').is_pending())
 
+    def test_native_correct_latest_observation_preserves_history(self):
+        from src.research_correction import ResearchCorrection
+        from src.source_release_projection import SourceReleaseProjection
+        self.open(self.author)
+        self.select_matter()
+        eid=self.core.db.execute('SELECT id FROM research_evidence '
+                                 'WHERE matter_id=?',(self.mid,)).fetchone()['id']
+        original=self.core.db.execute('SELECT observation_id FROM source_observation '
+                                      'WHERE evidence_id=?',(eid,)).fetchone()[0]
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        self.assertEqual(research.entrycget(3,'label'),'Correct latest observation')
+        research.invoke(3)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        self.assertEqual(dialog.title(),'Correct latest observation')
+        fields=[x for x in descendants(dialog) if isinstance(x,tk.Text)]
+        self.assertEqual(len(fields),3)
+        fields[0].insert('1.0','Corrected fictional observation')
+        fields[1].insert('1.0','Fictional corrected review note')
+        fields[2].insert('1.0','Original observation contained a fictional error')
+        with patch.object(messagebox,'askyesno',return_value=True):
+            save=next(x for x in descendants(dialog)
+                      if isinstance(x,ttk.Button)
+                      and x.cget('text')=='Save correction')
+            save.invoke()
+            self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_observation WHERE evidence_id=?',
+            (eid,)).fetchone()[0],2)
+        self.assertEqual(ResearchCorrection(self.core).history(
+            self.author,self.mid,eid)['corrections'][0]['old_id'],original)
+        self.assertEqual(SourceReleaseProjection(self.core).project(
+            self.author,self.mid)['sources'][0]['procedural_status'],
+            'needs_independent_second_review')
+        self.assertTrue(self.core.verify_audit())
+
     def test_unsubmitted_multiline_research_draft_purged_on_hide(self):
         self.open(self.author)
         self.select_matter()
