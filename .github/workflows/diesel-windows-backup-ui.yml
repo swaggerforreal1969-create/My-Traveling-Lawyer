@@ -6,6 +6,7 @@ on:
     paths:
       - tools/windows_fictional_gui.py
       - tests/test_windows_backup_ui.py
+      - tests/test_windows_restore_ui.py
       - .github/workflows/diesel-windows-backup-ui.yml
 permissions:
   contents: read
@@ -27,6 +28,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "ONBOARDING_REGRESSION" }
           python -m unittest discover -s tests -p test_windows_build_candidate.py -v
           if ($LASTEXITCODE -ne 0) { throw "STARTUP_REGRESSION" }
+          python -m unittest discover -s tests -p test_windows_restore_ui.py -v
+          if ($LASTEXITCODE -ne 0) { throw "RESTORE_GUI_DENIED" }
       - name: Compile changed startup code and preserve explicit frozen dependency
         shell: pwsh
         run: |
