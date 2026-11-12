@@ -274,6 +274,44 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                             x.get('1.0','end-1c') for x in self.texts))
 
 
+    def test_in_app_fictional_practice_walkthrough_is_private_and_read_only(self):
+        self.open(self.author)
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        help_entries=[i for i in range(menu.index('end')+1)
+                      if menu.entrycget(i,'label')=='Help']
+        self.assertEqual(len(help_entries),1)
+        help_menu=self.root.nametowidget(
+            menu.entrycget(help_entries[0],'menu'))
+        self.assertEqual(help_menu.entrycget(0,'label'),
+                         'Fictional practice walkthrough')
+        before=self.core.db.execute('SELECT count(*) FROM audit').fetchone()[0]
+        help_menu.invoke(0)
+        self.root.update()
+        windows=[w for w in self.root.winfo_children()
+                 if isinstance(w,tk.Toplevel)]
+        self.assertEqual(len(windows),1)
+        window=windows[0]
+        self.assertEqual(window.title(),'Fictional practice walkthrough')
+        content=next(w for w in descendants(window) if isinstance(w,tk.Text))
+        text=content.get('1.0','end-1c')
+        self.assertIn('Workload (read only)',text)
+        self.assertIn('Record manual observation',text)
+        self.assertIn('Completed tasks (read only)',text)
+        self.assertIn('Never share access codes',text)
+        self.assertNotIn('SECRET PRIVATE TASK',text)
+        self.assertNotIn('SECRET SOURCE',text)
+        self.assertNotIn(self.author,text)
+        self.assertEqual(str(content.cget('state')),'disabled')
+        self.assertEqual(
+            self.core.db.execute('SELECT count(*) FROM audit').fetchone()[0],
+            before)
+        close=next(w for w in descendants(window)
+                   if isinstance(w,ttk.Button) and
+                   w.cget('text')=='Close walkthrough')
+        close.invoke()
+        self.root.update()
+        self.assertFalse(window.winfo_exists())
+
     def test_research_menu_has_explicit_manual_source_and_observation(self):
         self.open(self.author)
         menu=self.root.nametowidget(self.root.cget('menu'))

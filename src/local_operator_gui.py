@@ -1992,6 +1992,58 @@ def launch_gui(core, token, *, run_mainloop=True):
                              command=inspect_completed_tasks)
     root_menu.add_cascade(label='Inspect',menu=inspect_menu)
 
+    def show_fictional_practice_walkthrough():
+        """Plain-language, in-app practice directions; no account data read."""
+        # This view never uses real client data or substitutes for acceptance.
+        # As a tracked private dialog it closes automatically when access
+        # is revoked, the app is hidden, or the current work is cleared.
+        dialog = tk.Toplevel(root)
+        dialog.title('Fictional practice walkthrough')
+        dialog.transient(root)
+        dialog.geometry('660x490')
+        dialog.minsize(480,320)
+        private_forms.append(dialog)
+        form = ttk.Frame(dialog,padding=12)
+        form.pack(fill='both',expand=True)
+        ttk.Label(form,text='Practice only — never enter real client information',
+                  wraplength=600).pack(anchor='w')
+        guide = tk.Text(form,wrap='word',undo=False,takefocus=True)
+        guide.pack(fill='both',expand=True,pady=8)
+        directions = (
+            'MY TRAVELING LAWYER — FICTIONAL PRACTICE\n\n'
+            'Use only made-up cases. Nothing here gives legal advice.\n\n'
+            '1. Click Workload (read only) to see an authorized overview.\n\n'
+            '2. Select a matter in the list and click Select matter.\n\n'
+            '3. Open Inspect > Selected matter (read only) to review the details.\n\n'
+            '4. Open Research > Add manual source to enter a made-up source. '
+            'The program does not check the website.\n\n'
+            '5. Open Research > Record manual observation to add a note '
+            'about that source. Click Save manual entry only when ready.\n\n'
+            '6. Open Research > View saved source (read only) to inspect '
+            'the saved source and research history.\n\n'
+            '7. The matter owner may choose Allow second reviewer. '
+            'A different authorized account records a decision with '
+            'Record review.\n\n'
+            '8. Select a fictional task and click Complete task. '
+            'Check the result using Refresh and Inspect > Completed tasks '
+            '(read only).\n\n'
+            '9. Close the program, reopen your fictional database, and '
+            'check Workload (read only). Do not repeat an action if the '
+            'program says its result is uncertain.\n\n'
+            'If an action fails, record only the step number and the '
+            'error wording. Never share access codes or private case text.'
+        )
+        guide.insert('1.0',directions)
+        guide.configure(state='disabled')
+        ttk.Button(form,text='Close walkthrough',
+                   command=dialog.destroy).pack(anchor='e')
+        guide.focus_set()
+
+    help_menu = tk.Menu(root,tearoff=False)
+    help_menu.add_command(label='Fictional practice walkthrough',
+                          command=show_fictional_practice_walkthrough)
+    root_menu.add_cascade(label='Help',menu=help_menu)
+
 
     portfolio_button = ttk.Button(buttons,text='Workload (read only)',
                                   command=show_portfolio)
