@@ -30,7 +30,7 @@ class RepoWorkflowGuard(unittest.TestCase):
                 self.assertNotIn("\n  schedule:\n",text)
     def test_restricted_module_is_not_claimed_present(self):
         source=(FOLDER/"pr110-security-write-races.yml").read_text(encoding="utf-8")
-        self.assertEqual(source.count("BLOCKED_REQUIRED_RESTRICTED_SOURCE"),4)
+        self.assertEqual(source.count("BLOCKED_REQUIRED_RESTRICTED_SOURCE"),3)
         self.assertIn('::error title=BLOCKED_REQUIRED_RESTRICTED_SOURCE',source)
     def test_broad_regression_avoids_docs_only_pushes(self):
         source=(FOLDER/"experimental-regression.yml").read_text(encoding="utf-8")
