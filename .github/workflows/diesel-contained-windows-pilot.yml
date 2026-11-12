@@ -1,0 +1,122 @@
+name: Diesel bounded Windows pilot (one-shot, no schedule)
+on:
+  push:
+    branches:
+      - engineering/diesel-contained-windows-pilot-20261112
+permissions:
+  contents: read
+concurrency:
+  group: diesel-windows-pilot-single
+  cancel-in-progress: false
+jobs:
+  independent-one-shot:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Preflight exact scoped identity and rules
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          if ("$env:GITHUB_REF_NAME" -ne "engineering/diesel-contained-windows-pilot-20261112") { throw "PROTECTED_REF_DENY" }
+          if ("$env:GITHUB_EVENT_NAME" -ne "push") { throw "NO_RECURRING_OR_MANUAL_RESTART" }
+          Write-Output "ONE_SHOT=YES"
+          Write-Output "PRODUCTION_NO_GO=YES"
+          Write-Output "AUTO_SOURCE_REPAIR=DISABLED"
+          Write-Output "MAX_NATIVE_PROBE_ATTEMPTS=3"
+      - name: Focused unchanged security and packaging tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p test_windows_build_candidate.py -v
+          if ($LASTEXITCODE -ne 0) { throw "SOURCE_GATE_DENIED" }
+          python -m unittest discover -s tests -p test_store_msix_preparation.py -v
+          if ($LASTEXITCODE -ne 0) { throw "PACKAGE_GATE_DENIED" }
+      - name: Exercise real Create Open Close Tk buttons without writing case files
+        shell: pwsh
+        run: |
+          $env:DIESEL_PILOT_PROOF="$env:RUNNER_TEMP\diesel-control-proof.json"
+          $passed=$false
+          for ($attempt=1; $attempt -le 3; $attempt++) {
+            Write-Output "CONTROL_PROBE_ATTEMPT=$attempt"
+            python -m tools.diesel_pilot_probe
+            if ($LASTEXITCODE -eq 0) { $passed=$true; break }
+            if ($attempt -lt 3) { Start-Sleep -Seconds 1 }
+          }
+          if (!$passed) { throw "THREE_BOUNDED_ATTEMPTS_FAILED" }
+      - name: Build unsigned frozen Windows application
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pyinstaller==6.16.0
+          if ($LASTEXITCODE -ne 0) { throw "DEPENDENCY_FAILED" }
+          ./tools/build_signed_windows.ps1 -BuildOnly
+          if ($LASTEXITCODE -ne 0) { throw "FROZEN_BUILD_DENIED" }
+      - name: Inspect frozen GUI, binary signature and trust fence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $exe="dist/MyTravelingLawyer-Practice/MyTravelingLawyer-Practice.exe"
+          if (!(Test-Path $exe)) { throw "EXE_MISSING" }
+          $toc=Get-Content "build/MyTravelingLawyer-Practice/Analysis-00.toc" -Raw
+          if ($toc -notmatch "src.local_operator_gui") { throw "GUI_DEPENDENCY_MISSING" }
+          $s=(Get-AuthenticodeSignature $exe).Status.ToString()
+          if ($s -ne "NotSigned") { throw "UNEXPECTED_SIGNATURE_STATE_$s" }
+          Write-Output "EXE_SHA256=$((Get-FileHash $exe -Algorithm SHA256).Hash)"
+          Write-Output "AUTHENTICODE=NotSigned"
+          Write-Output "SMART_APP_CONTROL=UNRESOLVED"
+          Write-Output "ATTORNEY_DISTRIBUTION=DENIED"
+      - name: Verify packaged EXE creates native window and exits cleanly
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $exe=(Resolve-Path "dist/MyTravelingLawyer-Practice/MyTravelingLawyer-Practice.exe").Path
+          $passed=$false
+          for ($attempt=1; $attempt -le 3; $attempt++) {
+            $p=Start-Process -FilePath $exe -PassThru
+            try {
+              Start-Sleep -Seconds 4
+              $p.Refresh()
+              if (!$p.HasExited -and $p.MainWindowHandle -ne 0) {
+                Write-Output "FROZEN_NATIVE_GUI_OPENED=YES"
+                $passed=$true
+              }
+            } finally {
+              if (!$p.HasExited) {
+                [void]$p.CloseMainWindow()
+                if (!$p.WaitForExit(5000)) { Stop-Process -Id $p.Id -Force }
+              }
+            }
+            if ($passed) { break }
+          }
+          if (!$passed) { throw "BOUNDED_FROZEN_WINDOW_PROBE_FAILED" }
+      - name: Emit inspectable single-run outcome (no customer ZIP)
+        if: always()
+        shell: pwsh
+        run: |
+          $result=@{
+            workflow="DIESEL_BOUNDED_ONE_SHOT"
+            commit="$env:GITHUB_SHA"
+            branch="$env:GITHUB_REF_NAME"
+            no_recurring_schedule=$true
+            max_probe_attempts=3
+            no_automatic_repairs=$true
+            protected_merge_allowed=$false
+            customer_delivery_allowed=$false
+            smart_app_control="UNRESOLVED"
+            signing="NOT_SIGNED"
+            windows_acceptance="NOT_RELEASE_READY"
+          } | ConvertTo-Json
+          $result | Set-Content "$env:RUNNER_TEMP\diesel-pilot-summary.json"
+          Write-Output $result
+      - name: Upload only sanitized pilot evidence (not unsigned EXE)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diesel-windows-pilot-evidence
+          path: |
+            ${{ runner.temp }}/diesel-pilot-summary.json
+            ${{ runner.temp }}/diesel-control-proof.json
+          retention-days: 7
+          if-no-files-found: warn
