@@ -80,7 +80,10 @@ class RestoreUI(unittest.TestCase):
                  patch.object(gui.tk,"Label") as label, \
                  patch.object(gui.tk,"Entry",side_effect=FakeEntry), \
                  patch.object(gui.tk,"Button") as button:
-                gui.restore_case(self.root)
+                class FakeRoot:
+                    def wait_window(self, window):
+                        pass
+                gui.restore_case(FakeRoot())
                 restore.assert_called_once()
                 self.assertEqual(entry_calls,["NEW-PRIVATE-1","NEW-PRIVATE-2"])
                 toplevel.assert_called_once()
