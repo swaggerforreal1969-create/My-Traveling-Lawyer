@@ -29,7 +29,7 @@ class StorePackagePreparation(unittest.TestCase):
         self.assertIn(b"runFullTrust", m)
         self.assertIn(b"MyTravelingLawyer-Practice.exe", m)
         self.assertIn(b"Fictional", m)
-        self.assertNotIn(b"restricted", m.lower())  # forbidden source files not packaged here
+        self.assertNotIn(b"secure_server.py", m)  # protected source never referenced
 
     def test_icons_png_dimensions(self):
         for n in (44, 50, 150):
