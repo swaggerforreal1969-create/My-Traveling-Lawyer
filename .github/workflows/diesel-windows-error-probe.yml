@@ -1,0 +1,49 @@
+name: Diesel Windows error-code diagnostic (one-shot, not release)
+on:
+  push:
+    branches:
+      - diesel/mtl-windows-error-probe-20261112
+    paths:
+      - ".github/workflows/diesel-windows-error-probe.yml"
+      - "tools/windows_error_probe.ps1"
+      - "tools/windows_error_classifier.py"
+      - "tests/test_windows_error_classifier.py"
+permissions:
+  contents: read
+concurrency:
+  group: diesel-windows-error-diagnostic
+  cancel-in-progress: false
+jobs:
+  exact-sha-windows:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Narrow classification and Practice Help tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p test_windows_error_classifier.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'CLASSIFIER_FAILURE' }
+          python -m unittest discover -s tests -p test_windows_practice_help.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'HELP_FAILURE' }
+      - name: Rebuild exact-SHA unsigned frozen executable
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pyinstaller==6.16.0
+          if ($LASTEXITCODE -ne 0) { throw 'INSTALL_FAILURE' }
+          ./tools/build_signed_windows.ps1 -BuildOnly
+          if ($LASTEXITCODE -ne 0) { throw 'BUILD_FAILURE' }
+      - name: Capture real Windows startup and policy evidence
+        shell: pwsh
+        run: ./tools/windows_error_probe.ps1
+      - name: Save sanitized evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diesel-windows-error-codes-evidence
+          path: ${{ runner.temp }}/mtl-windows-error-evidence.json
+          retention-days: 7
+          if-no-files-found: warn

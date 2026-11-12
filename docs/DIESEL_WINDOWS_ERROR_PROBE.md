@@ -1,0 +1,6 @@
+# Windows error-code diagnostic — scope and limitations
+One-shot isolated GitHub-hosted Windows runner on `diesel/mtl-windows-error-probe-20261112`. Builds the current Practice Help source; checks bundled attorney GUI, genuine Windows Authenticode state, SHA-256, native process window and clean exit. Queries fresh CodeIntegrity, AppLocker and Application events and writes sanitized identifiers, not event messages or private paths. Four classifier tests distinguish matching My Traveling Lawyer events from unrelated engine events. No scheduler, retries, auto repair or protected branch merges.
+
+**Important:** User-provided Windows Event 3077 `0xc0e90002` relates to **Koontcee**, not My Traveling Lawyer. No CodeIntegrity event found on a GitHub runner means only that no matching event was found there, **not** that Smart App Control allows the app on the owner's computer. Authenticode `NotSigned` means this is **not trusted for customer distribution**. Without a verified signing identity and authorized user-side SAC-on test, final cause of My Traveling Lawyer's block remains UNRESOLVED.
+
+No spending, signed certificate issuance, Store submission, production, customer distribution, Windows security changes, real client data, or restricted-source publication. Production NO-GO.
