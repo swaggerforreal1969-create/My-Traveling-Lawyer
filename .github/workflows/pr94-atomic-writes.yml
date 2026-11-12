@@ -8,6 +8,10 @@ on:
       - engineering/pr92-independent-process-security-gate-20261110
 permissions:
   contents: read
+concurrency:
+  group: mtl-pr94-atomic-writes-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   executable-security-boundaries:
     strategy:

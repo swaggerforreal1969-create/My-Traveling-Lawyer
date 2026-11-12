@@ -8,6 +8,10 @@ on:
       - engineering/identified-research-source-selection-20261110
 permissions:
   contents: read
+concurrency:
+  group: mtl-pr92-security-independent-process-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   executable-security-boundaries:
     strategy:

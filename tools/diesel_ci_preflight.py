@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "b25fc1df65acd55e03ee77b193187e81d70bd21d"
+BASE = "f8fd1a9fb8902db96d34ce3f776e3164e916b3fe"
 WINDOWS_INPUTS = ("tools/windows_fictional_gui.py", "tools/build_signed_windows.ps1",
                   "src/offline_pilot.py", "src/fictional_pilot_backup.py",
                   "tools/windows_native_backup_restore_acceptance.py")
@@ -62,7 +62,7 @@ def main():
     args=parser.parse_args()
     sha=os.getenv("GITHUB_SHA","")
     ref=os.getenv("GITHUB_REF","")
-    if ref!="refs/heads/diesel/mtl-efficient-pipeline-20261112":
+    if ref!="refs/heads/diesel/mtl-repository-efficiency-20261112":
         raise SystemExit("WRONG_BRANCH_DENIED")
     if os.getenv("GITHUB_EVENT_NAME")!="push":
         raise SystemExit("UNEXPECTED_EVENT_DENIED")
