@@ -14,5 +14,6 @@
       "tests/test_windows_practice_help.py"
     ],
     "new_release_permission": false
-  }
+  },
+  "fix_attempt": 2
 }

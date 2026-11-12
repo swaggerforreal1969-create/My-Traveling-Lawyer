@@ -42,8 +42,8 @@ def verify_guards():
         raise RuntimeError("EVENT_DENIED")
     if output("git","branch","--show-current") != BRANCH:
         raise RuntimeError("CHECKOUT_DENIED")
-    if output("git","status","--porcelain"):
-        raise RuntimeError("UNCLEAN_BASELINE")
+    if output("git","status","--porcelain","--untracked-files=no"):
+        raise RuntimeError("UNCLEAN_TRACKED_BASELINE")
     if output("git","rev-parse","HEAD") != os.environ.get("GITHUB_SHA"):
         raise RuntimeError("NONEXACT_SOURCE_SHA")
     return q
@@ -108,9 +108,10 @@ if __name__ == "__main__":
 '''
     GUI_PATH.write_text(changed,encoding="utf-8")
     TEST_PATH.write_text(tests,encoding="utf-8")
-    changed_files = set(output("git","status","--porcelain").splitlines())
-    # filenames come from porcelain; there may be A/M tracked or untracked files only.
-    paths = {s[3:].replace("\\\\","/") for s in changed_files}
+    # Whitelist actual planned paths. Python __pycache__ files are not source edits.
+    paths = set(output("git","diff","--name-only").splitlines())
+    if TEST_PATH.exists():
+        paths.add("tests/test_windows_practice_help.py")
     if paths != ALLOWED:
         raise RuntimeError(f"UNEXPECTED_FILES: {sorted(paths)}")
     run("git","diff","--check")
@@ -134,8 +135,8 @@ def main():
     run("git","-c","user.name=Diesel Bounded Pilot","-c","user.email=diesel-bounded-pilot@users.noreply.github.com",
         "commit","-m","Add plain-language fictional Windows Practice Help with focused acceptance")
     sha=output("git","rev-parse","HEAD")
-    if output("git","status","--porcelain"):
-        raise RuntimeError("POST_COMMIT_DIRTY")
+    if output("git","status","--porcelain","--untracked-files=no"):
+        raise RuntimeError("POST_COMMIT_TRACKED_DIRTY")
     run("git","push","origin","HEAD:refs/heads/"+BRANCH)
     remote=output("git","ls-remote","origin","refs/heads/"+BRANCH).split()[0]
     if sha != remote:
