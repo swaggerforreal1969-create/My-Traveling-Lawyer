@@ -2165,7 +2165,7 @@ def launch_gui(core, token, *, run_mainloop=True):
             'about that source. Click Save manual entry only when ready.\n\n'
             '6. Use Research > Correct latest observation to fix a mistaken '
             'entry without deleting the original. A new review is needed. '
-            'Open Research > View saved source (read only) to inspect 
+            'Open Research > View saved source (read only) to inspect '
             'the saved source and research history.\n\n'
             '7. The matter owner may choose Allow second reviewer. '
             'A different authorized account records a decision with '
