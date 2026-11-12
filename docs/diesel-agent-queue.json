@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "mode": "ONE_SHOT",
+  "enabled": true,
+  "allow_recurring": false,
+  "max_change_attempts": 1,
+  "max_changed_files": 2,
+  "task": {
+    "id": "windows-practice-help-onboarding",
+    "priority": "B-desktop-onboarding",
+    "description": "Add a plain-language Practice Help button to fictional Windows startup. Preserve Create/Open/Close and privacy restrictions.",
+    "allowed_files": [
+      "tools/windows_fictional_gui.py",
+      "tests/test_windows_practice_help.py"
+    ],
+    "new_release_permission": false
+  }
+}

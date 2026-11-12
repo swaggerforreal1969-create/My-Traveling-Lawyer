@@ -1,0 +1,37 @@
+name: Diesel guarded code-writing worker (ONE SHOT; no schedule)
+on:
+  push:
+    branches:
+      - diesel/mtl-windows-agent-20261112
+    paths:
+      - docs/diesel-agent-queue.json
+permissions:
+  contents: write
+concurrency:
+  group: diesel-bounded-writing-20261112
+  cancel-in-progress: false
+jobs:
+  one-task-one-commit:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Guarded source change and exact-source focused acceptance
+        shell: pwsh
+        run: |
+          python -m tools.diesel_agent_worker
+          if ($LASTEXITCODE -ne 0) { throw "BOUNDED_AGENT_DENIED" }
+      - name: Evidence only; never upload unsigned customer binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diesel-bounded-coding-worker-evidence
+          path: \${{ runner.temp }}/diesel-agent-evidence.json
+          retention-days: 7
+          if-no-files-found: warn
