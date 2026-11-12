@@ -74,6 +74,11 @@ class SecureCore:
         if 'last_seen_at' not in credential_cols:
             self.db.execute('ALTER TABLE credentials ADD COLUMN last_seen_at TEXT')
         self.db.execute('UPDATE credentials SET last_seen_at=? WHERE last_seen_at IS NULL', (datetime.now(timezone.utc).isoformat(),))
+        # Only explicitly initialized fictional pilots can defer the first desktop login.
+        # Existing credentials remain strict-idle by default.
+        credential_cols={r['name'] for r in self.db.execute('PRAGMA table_info(credentials)')}
+        if 'first_pilot_login_pending' not in credential_cols:
+            self.db.execute('ALTER TABLE credentials ADD COLUMN first_pilot_login_pending INTEGER NOT NULL DEFAULT 0')
         task_cols={r['name'] for r in self.db.execute('PRAGMA table_info(tasks)')}
         if 'version' not in task_cols:self.db.execute('ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
 
@@ -131,17 +136,21 @@ class SecureCore:
         if not isinstance(token,str) or len(token)>512 or len(token)<32: raise Denied('Access denied')
         digest=sha256(token.encode()).hexdigest()
         now=datetime.now(timezone.utc)
-        row=self.db.execute('''SELECT u.id,u.firm_id,c.last_seen_at FROM credentials c JOIN users u ON c.user_id=u.id
+        row=self.db.execute('''SELECT u.id,u.firm_id,c.last_seen_at,c.first_pilot_login_pending FROM credentials c JOIN users u ON c.user_id=u.id
             WHERE c.token_digest=? AND c.revoked=0 AND u.active=1 AND c.expires_at>?''',(digest,now.isoformat())).fetchone()
         if row is None: raise Denied('Access denied')
-        try:
-            last=datetime.fromisoformat(row['last_seen_at'])
-            if last.tzinfo is None or (now-last).total_seconds() >= self.IDLE_SECONDS or (last-now).total_seconds()>30:
+        if not row['first_pilot_login_pending']:
+            try:
+                last=datetime.fromisoformat(row['last_seen_at'])
+                if last.tzinfo is None or (now-last).total_seconds() >= self.IDLE_SECONDS or (last-now).total_seconds()>30:
+                    raise Denied('Access denied')
+            except (TypeError,ValueError):
                 raise Denied('Access denied')
-        except (TypeError,ValueError):
-            raise Denied('Access denied')
+        # A successful active authorization consumes the one-time onboarding
+        # allowance. Revocation and absolute expiry were checked above.
         if not self._passive_auth.get():
-            self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(now.isoformat(),digest))
+            self.db.execute('UPDATE credentials SET last_seen_at=?, first_pilot_login_pending=0 WHERE token_digest=?',
+                            (now.isoformat(),digest))
         return row
 
     def _role(self, identity, matter_id, allowed):

@@ -3,6 +3,8 @@
 No mocked research source, no browser, no network server or real client data.
 """
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
+from hashlib import sha256
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import os
@@ -66,6 +68,51 @@ class OfflinePilotLifecycleTests(unittest.TestCase):
             with self.assertRaises(Denied):
                 self.initialize()
             self.assertEqual(other.read_text(), 'untouched')
+
+    def test_first_desktop_login_survives_onboarding_delay_but_idle_stays_strict(self):
+        credentials = self.initialize()
+        token = credentials['editor_token']
+        digest = sha256(token.encode()).hexdigest()
+        stale = (datetime.now(timezone.utc) - timedelta(seconds=SecureCore.IDLE_SECONDS + 60)).isoformat()
+        with _closing_core(self.path) as core:
+            core.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+                            (stale, digest))
+        # The operator can spend minutes copying the displayed one-time code.
+        with patch('src.local_operator_gui.launch_gui', return_value=None) as gui:
+            open_fictional_pilot(self.path, token)
+            gui.assert_called_once()
+        with _closing_core(self.path) as core:
+            state = core.db.execute(
+                'SELECT first_pilot_login_pending FROM credentials WHERE token_digest=?',
+                (digest,)).fetchone()
+            self.assertEqual(state['first_pilot_login_pending'], 0)
+            core.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+                            (stale, digest))
+        with patch('src.local_operator_gui.launch_gui') as gui:
+            with self.assertRaises(Denied):
+                open_fictional_pilot(self.path, token)
+            gui.assert_not_called()
+
+    def test_first_desktop_login_still_denies_expired_and_revoked_codes(self):
+        credentials = self.initialize()
+        token = credentials['editor_token']
+        digest = sha256(token.encode()).hexdigest()
+        with _closing_core(self.path) as core:
+            expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+            core.db.execute('UPDATE credentials SET expires_at=? WHERE token_digest=?',
+                            (expired, digest))
+        with patch('src.local_operator_gui.launch_gui') as gui:
+            with self.assertRaises(Denied):
+                open_fictional_pilot(self.path, token)
+            gui.assert_not_called()
+        reviewer = credentials['reviewer_token']
+        with _closing_core(self.path) as core:
+            core.db.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',
+                            (sha256(reviewer.encode()).hexdigest(),))
+        with patch('src.local_operator_gui.launch_gui') as gui:
+            with self.assertRaises(Denied):
+                open_fictional_pilot(self.path, reviewer)
+            gui.assert_not_called()
 
     def test_invalid_token_fails_before_graphical_window_creation(self):
         self.initialize()

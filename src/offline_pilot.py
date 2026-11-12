@@ -68,6 +68,14 @@ def initialize_fictional_pilot(database: Path):
         fence = LocalWriteFence(path)
         if fence.is_pending():
             raise Denied('Fresh pilot has an unexpected pending write')
+        # Setup uses the attorney token to seed a fictional matter. Defer
+        # the first *desktop* idle clock until an actual operator login.
+        from hashlib import sha256
+        with core.db:
+            for pilot_token in (editor_token, reviewer_token):
+                core.db.execute(
+                    'UPDATE credentials SET first_pilot_login_pending=1 WHERE token_digest=?',
+                    (sha256(pilot_token.encode()).hexdigest(),))
         return {'editor_token': editor_token,
                 'reviewer_token': reviewer_token,
                 'database': path}
