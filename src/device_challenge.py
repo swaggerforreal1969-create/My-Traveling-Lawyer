@@ -50,7 +50,7 @@ class DeviceChallenge:
     def register(self, token, public_key_b64):
         key=decode_url64(public_key_b64,32)
         Ed25519PublicKey.from_public_bytes(key)
-        with self.core.lock, self.core.db:
+        with self.core.authorized_transaction():
             identity=self.core._identity(token)
             key_id=secrets.token_hex(16)
             self.core.db.execute('INSERT INTO device_keys(user_id,key_id,key_bytes) VALUES(?,?,?)',
@@ -60,7 +60,7 @@ class DeviceChallenge:
 
     def revoke(self, token, key_id):
         """Owner of a demo device key can revoke it; outstanding challenges fail closed."""
-        with self.core.lock, self.core.db:
+        with self.core.authorized_transaction():
             identity=self.core._identity(token)
             cursor=self.core.db.execute(
                 'UPDATE device_keys SET revoked=1 WHERE key_id=? AND user_id=? AND revoked=0',
@@ -72,7 +72,7 @@ class DeviceChallenge:
             return {'revoked':True}
 
     def issue(self, token, key_id):
-        with self.core.lock, self.core.db:
+        with self.core.authorized_transaction():
             identity=self.core._identity(token)
             row=self.core.db.execute('SELECT 1 FROM device_keys WHERE key_id=? AND user_id=? AND revoked=0',
                 (key_id,identity['id'])).fetchone()
@@ -86,7 +86,7 @@ class DeviceChallenge:
         if not isinstance(nonce,str) or len(nonce)>128 or len(nonce)<32:
             raise DeviceDenied('Invalid challenge')
         signature=decode_url64(signature_b64,64)
-        with self.core.lock, self.core.db:
+        with self.core.authorized_transaction():
             identity=self.core._identity(token)
             digest=sha256(nonce.encode()).hexdigest()
             row=self.core.db.execute('''SELECT c.expires,c.used,k.key_bytes FROM device_challenges c

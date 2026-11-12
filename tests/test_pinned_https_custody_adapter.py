@@ -169,6 +169,63 @@ class RealProviderReadinessTests(unittest.TestCase):
                 with self.subTest(kw=kw),self.assertRaises(Denied):
                     self.active(**kw)
 
+
+    def test_v2_requires_separate_explicit_protocol_selection(self):
+        from src.nonce_bound_custody import SCHEMA
+        with self.assertRaises(Denied):
+            self.active()("v2_read_latest",{"schema":SCHEMA})
+        self.mock_conn.assert_not_called()
+
+    def test_v2_adapter_stays_disabled_by_default(self):
+        from src.nonce_bound_custody import SCHEMA
+        adapter=PinnedHTTPSCustodyAdapter(protocol_version="v2")
+        with self.assertRaises(Denied):
+            adapter("v2_read_latest",{"schema":SCHEMA})
+        self.mock_conn.assert_not_called()
+
+    def test_explicit_v2_routes_and_no_v1_downgrade(self):
+        from src.nonce_bound_custody import SCHEMA
+        routes={
+            "v2_admit":"/v2/custody/admit",
+            "v2_read_latest":"/v2/custody/latest",
+            "v2_read_head_at":"/v2/custody/head-at"}
+        for operation,path in routes.items():
+            with self.subTest(operation=operation):
+                self.connection.called.clear()
+                result=self.active(protocol_version="v2")(
+                    operation,{"schema":SCHEMA,"credential":"fictional"})
+                self.assertEqual(result["sequence"],1)
+                sent=[x for x in self.connection.called if isinstance(x,tuple)]
+                self.assertEqual(len(sent),1)
+                self.assertEqual(sent[0][0:2],("POST",path))
+        self.connection.called.clear()
+        with self.assertRaises(Denied):
+            self.active(protocol_version="v2")("read_head",{"schema":SCHEMA})
+        self.assertFalse(any(isinstance(x,tuple) for x in self.connection.called))
+
+    def test_v2_rejects_schema_confusion_before_network(self):
+        from src.nonce_bound_custody import SCHEMA
+        self.connection.called.clear()
+        for payload in ({},{"schema":"mtl.custody.v1"},
+                        {"schema":SCHEMA+"-downgrade"},{"schema":None}):
+            with self.subTest(payload=payload),self.assertRaises(Denied):
+                self.active(protocol_version="v2")("v2_read_latest",payload)
+        self.mock_conn.assert_not_called()
+
+    def test_unrecognized_protocol_rejected_without_network(self):
+        for protocol in ("v3",None,1,"V2"):
+            with self.subTest(protocol=protocol),self.assertRaises(Denied):
+                PinnedHTTPSCustodyAdapter(protocol_version=protocol)
+        self.mock_conn.assert_not_called()
+
+    def test_v2_certificate_mismatch_refuses_all_requests(self):
+        from src.nonce_bound_custody import SCHEMA
+        self.connection.certificate=b"untrusted-v2-leaf"
+        with self.assertRaises(Denied):
+            self.active(protocol_version="v2")(
+                "v2_admit",{"schema":SCHEMA,"credential":"fictional"})
+        self.assertFalse(any(isinstance(x,tuple) for x in self.connection.called))
+
     def test_adapter_cannot_activate_other_operations(self):
         with self.assertRaises(Denied):self.active()("delete_history",{})
         self.mock_conn.assert_not_called()

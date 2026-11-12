@@ -82,6 +82,10 @@ jobs:
         run: |
           python -m py_compile src/offline_pilot.py tests/test_offline_pilot.py
           python -m unittest discover -s tests -p 'test_offline_pilot.py' -q
+      - name: Credential-free fictional backup and fresh-location restore acceptance
+        run: |
+          python -m py_compile src/fictional_pilot_backup.py tests/test_fictional_pilot_backup.py
+          python -m unittest discover -s tests -p 'test_fictional_pilot_backup.py' -q
       - name: Portable fictional desktop package and extraction acceptance
         run: |
           python -m py_compile tools/build_offline_pilot_preview.py tests/test_desktop_package.py
@@ -319,6 +323,10 @@ jobs:
         run: python -m unittest discover -s tests -p test_desktop_package.py -v
       - name: Real local pilot authorization, workflow and restart checks
         run: python -m unittest discover -s tests -p test_offline_pilot.py -v
+      - name: Cross-platform credential-free fictional backup and fresh-location restore acceptance
+        run: |
+          python -m py_compile src/fictional_pilot_backup.py tests/test_fictional_pilot_backup.py
+          python -m unittest discover -s tests -p test_fictional_pilot_backup.py -v
       - name: Native Windows/macOS Tk full widget acceptance (must execute, not skip)
         if: matrix.os != 'ubuntu-latest'
         env:
@@ -326,6 +334,19 @@ jobs:
         run: python -m unittest discover -s tests -p test_native_tk_operator.py -v
       - name: Build reproducible experimental preview archive
         run: python tools/build_offline_pilot_preview.py --output mtl-fictional-preview.zip
+      # Windows acceptance is already exercised above. This emits one
+      # machine-verifiable receipt only after ALL four Windows steps pass.
+      - name: Write exact-SHA Windows acceptance receipt (fictional only)
+        if: matrix.os == 'windows-latest'
+        run: python tools/windows_acceptance_receipt.py --archive mtl-fictional-preview.zip --output windows-acceptance.json
+      - name: Retain short-lived private Windows acceptance evidence
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtl-windows-acceptance-NOT-A-RELEASE
+          path: windows-acceptance.json
+          if-no-files-found: error
+          retention-days: 3
       - name: Retain private experimental ZIP for inspection (Linux only)
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4

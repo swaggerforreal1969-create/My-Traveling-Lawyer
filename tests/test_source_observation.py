@@ -46,6 +46,65 @@ class SourceObservationTests(unittest.TestCase):
         self.assertEqual(1,len(h['observations']))
         self.assertNotIn('captured_text',h['observations'][0])
 
+    def test_correction_preserves_original_denies_replay_and_resets_review(self):
+        from src.research_correction import ResearchCorrection
+        from src.source_release_projection import SourceReleaseProjection
+        original=self.capture()
+        svc=ResearchCorrection(self.core)
+        new=svc.record(self.token,self.matter,self.evidence,original['observation_id'],
+                       'Revised fictional observation',
+                       'Human note about the revised fictional observation',
+                       'The original invented entry contained a material typo')
+        self.assertTrue(new['new_independent_review_required'])
+        hist=self.observations.history(self.token,self.matter,self.evidence)['observations']
+        self.assertEqual(len(hist),2)
+        self.assertEqual(hist[0]['record_digest'],original['record_digest'])
+        self.assertEqual(len(svc.history(self.token,self.matter,
+                                         self.evidence)['corrections']),1)
+        self.assertEqual(SourceReleaseProjection(self.core).project(
+            self.token,self.matter)['sources'][0]['procedural_status'],
+            'needs_independent_second_review')
+        with self.assertRaises(EvidenceInvalid):
+            svc.record(self.token,self.matter,self.evidence,original['observation_id'],
+                       'Replay fictional observation','New note about this repeated try',
+                       'Trying to reapply the original correction again')
+        with self.assertRaises(Denied):
+            svc.record(self.viewer_token,self.matter,self.evidence,
+                       new['observation_id'],'Unauthorized change',
+                       'Unauthorized review note about this source',
+                       'Viewer attempted an improper correction')
+        self.assertTrue(self.core.verify_audit())
+        self.core.close()
+        self.core=SecureCore(self.path)
+        self.assertEqual(len(ResearchCorrection(self.core).history(
+            self.token,self.matter,self.evidence)['corrections']),1)
+
+    def test_correction_tamper_and_rollback(self):
+        from src.research_correction import ResearchCorrection
+        original=self.capture()
+        svc=ResearchCorrection(self.core)
+        saved=self.core._audit
+        def fail(actor,action,target):
+            if action=='research.observation_correction':
+                raise RuntimeError('Simulated failure')
+            return saved(actor,action,target)
+        with patch.object(self.core,'_audit',side_effect=fail):
+            with self.assertRaises(RuntimeError):
+                svc.record(self.token,self.matter,self.evidence,
+                    original['observation_id'],'Proposed fictional revision',
+                    'A long enough revised fictional review note',
+                    'The initial draft had a mistaken source entry')
+        self.assertEqual(len(self.observations.history(
+            self.token,self.matter,self.evidence)['observations']),1)
+        svc.record(self.token,self.matter,self.evidence,original['observation_id'],
+                   'Accepted fictional revision',
+                   'Corrected note for the fictional file',
+                   'Earlier fictional observation was wrong')
+        self.core.db.execute('UPDATE research_correction SET reason=?',
+                             ('tampered reason',))
+        with self.assertRaises(EvidenceInvalid):
+            svc.history(self.token,self.matter,self.evidence)
+
     def test_viewer_can_read_but_not_capture(self):
         self.capture()
         self.assertEqual(1,len(self.observations.history(self.viewer_token,self.matter,self.evidence)['observations']))

@@ -17,7 +17,7 @@ class SecondSourceReview:
     def __init__(self, core):
         self.core = core
         self.observations = SourceObservation(core)
-        with core.lock, core.db:
+        with core.authorized_transaction():
             core.db.execute('''CREATE TABLE IF NOT EXISTS source_second_review (
                 id TEXT PRIMARY KEY, matter_id TEXT NOT NULL, evidence_id TEXT NOT NULL,
                 observation_id TEXT NOT NULL UNIQUE, original_actor_id TEXT NOT NULL,
@@ -33,54 +33,46 @@ class SecondSourceReview:
         if not isinstance(observation_id, str) or len(observation_id) != 32 or any(
                 c not in '0123456789abcdef' for c in observation_id):
             raise EvidenceInvalid('Invalid observation identifier')
-        with self.core.lock:
-            # BEGIN IMMEDIATE reserves the cross-process SQLite writer slot
-            # before inspecting credentials, current observation and reviews.
-            self.core.db.execute('BEGIN IMMEDIATE')
-            try:
-                reviewer = self.core._identity(token)
-                self.core._role(reviewer, matter_id, ('owner', 'editor'))
-                # Verify the original source and every observation before relying on it.
-                history = self.observations.history(token, matter_id, evidence_id)
-                latest = max(history['observations'],
-                             key=lambda item: (item['recorded_at'], item['observation_id']),
-                             default=None)
-                if latest is None or latest['observation_id'] != observation_id:
-                    raise EvidenceInvalid('Review requires latest source observation')
-                row = self.core.db.execute('''SELECT * FROM source_observation
-                    WHERE observation_id=? AND matter_id=? AND evidence_id=?''',
-                    (observation_id, matter_id, evidence_id)).fetchone()
-                if row is None:
-                    raise EvidenceInvalid('Observation not found in matter')
-                prior = dict(row)
-                digest = prior.pop('record_digest')
-                if _digest(prior) != digest:
-                    raise EvidenceInvalid('Original observation corrupted')
-                if prior['actor_id'] == reviewer['id']:
-                    raise EvidenceInvalid('Independent second user required')
-                if self.core.db.execute('SELECT 1 FROM source_second_review WHERE observation_id=?',
-                                        (observation_id,)).fetchone() is not None:
-                    raise EvidenceInvalid('Observation already countersigned')
-                entry = {'id': secrets.token_hex(16), 'matter_id': matter_id,
-                         'evidence_id': evidence_id, 'observation_id': observation_id,
-                         'original_actor_id': prior['actor_id'], 'reviewer_id': reviewer['id'],
-                         'observation_digest': digest, 'decision': decision,
-                         'note': note.strip(), 'recorded_at': datetime.now(timezone.utc).isoformat()}
-                fingerprint = _digest(entry)
-                self.core.db.execute('''INSERT INTO source_second_review VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
-                                     (*entry.values(), fingerprint))
-                self.core._audit(reviewer['id'], 'research.second_source_review', entry['id'])
-                self.core.db.commit()
-                return {'review_id': entry['id'], 'second_human_account': True,
-                        'decision': decision, 'official_source_authenticated': False,
-                        'legal_authority_current': False}
-
-            except BaseException:
-                self.core.db.rollback()
-                raise
+        # The shared boundary also supports nesting inside the attorney inbox
+        # action. Only the outermost authorized_transaction owns commit/rollback.
+        with self.core.authorized_transaction():
+            reviewer = self.core._identity(token)
+            self.core._role(reviewer, matter_id, ('owner', 'editor'))
+            history = self.observations.history(token, matter_id, evidence_id)
+            latest = max(history['observations'],
+                         key=lambda item: (item['recorded_at'], item['observation_id']),
+                         default=None)
+            if latest is None or latest['observation_id'] != observation_id:
+                raise EvidenceInvalid('Review requires latest source observation')
+            row = self.core.db.execute('''SELECT * FROM source_observation
+                WHERE observation_id=? AND matter_id=? AND evidence_id=?''',
+                (observation_id, matter_id, evidence_id)).fetchone()
+            if row is None:
+                raise EvidenceInvalid('Observation not found in matter')
+            prior = dict(row)
+            digest = prior.pop('record_digest')
+            if _digest(prior) != digest:
+                raise EvidenceInvalid('Original observation corrupted')
+            if prior['actor_id'] == reviewer['id']:
+                raise EvidenceInvalid('Independent second user required')
+            if self.core.db.execute('SELECT 1 FROM source_second_review WHERE observation_id=?',
+                                    (observation_id,)).fetchone() is not None:
+                raise EvidenceInvalid('Observation already countersigned')
+            entry = {'id': secrets.token_hex(16), 'matter_id': matter_id,
+                     'evidence_id': evidence_id, 'observation_id': observation_id,
+                     'original_actor_id': prior['actor_id'], 'reviewer_id': reviewer['id'],
+                     'observation_digest': digest, 'decision': decision,
+                     'note': note.strip(), 'recorded_at': datetime.now(timezone.utc).isoformat()}
+            fingerprint = _digest(entry)
+            self.core.db.execute('''INSERT INTO source_second_review VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
+                                 (*entry.values(), fingerprint))
+            self.core._audit(reviewer['id'], 'research.second_source_review', entry['id'])
+            return {'review_id': entry['id'], 'second_human_account': True,
+                    'decision': decision, 'official_source_authenticated': False,
+                    'legal_authority_current': False}
 
     def history(self, token, matter_id, evidence_id):
-        with self.core.lock:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             self.core._role(actor, matter_id, ('owner', 'editor', 'viewer'))
             # Read-only integrity validation; viewer cannot add a countersignature.

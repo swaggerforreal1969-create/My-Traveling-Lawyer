@@ -28,7 +28,7 @@ def reconcile_task(core, token, matter_id, task_id, expected_version):
             or not isinstance(task_id, str) or not 1 <= len(task_id) <= 64
             or type(expected_version) is not int or expected_version < 1):
         raise Invalid('Invalid task reconciliation request')
-    with core.lock:
+    with core.authorized_transaction():
         actor = core._identity(token)
         core._role(actor, matter_id, ('owner', 'editor', 'viewer'))
         row = core.db.execute(

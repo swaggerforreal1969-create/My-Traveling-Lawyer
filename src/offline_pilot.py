@@ -68,6 +68,14 @@ def initialize_fictional_pilot(database: Path):
         fence = LocalWriteFence(path)
         if fence.is_pending():
             raise Denied('Fresh pilot has an unexpected pending write')
+        # Setup uses the attorney token to seed a fictional matter. Defer
+        # the first *desktop* idle clock until an actual operator login.
+        from hashlib import sha256
+        with core.db:
+            for pilot_token in (editor_token, reviewer_token):
+                core.db.execute(
+                    'UPDATE credentials SET first_pilot_login_pending=1 WHERE token_digest=?',
+                    (sha256(pilot_token.encode()).hexdigest(),))
         return {'editor_token': editor_token,
                 'reviewer_token': reviewer_token,
                 'database': path}
@@ -153,6 +161,12 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     for name in ('init', 'open', 'status'):
         sub.add_parser(name).add_argument('--database', type=Path, required=True)
+    backup = sub.add_parser('backup', help='Fictional-only credential-free backup')
+    backup.add_argument('--database', type=Path, required=True)
+    backup.add_argument('--archive', type=Path, required=True)
+    restore = sub.add_parser('restore', help='Restore only to an unused database')
+    restore.add_argument('--archive', type=Path, required=True)
+    restore.add_argument('--database', type=Path, required=True)
     args = parser.parse_args(argv)
     print(BANNER)
     if args.command == 'init':
@@ -163,6 +177,22 @@ def main(argv=None):
         print('Store these separately; never paste them into chat or logs.')
         print('Next: python -m src.offline_pilot open --database',
               result['database'])
+    elif args.command == 'backup':
+        from .fictional_pilot_backup import backup_fictional_pilot
+        token = getpass('Fictional pilot OWNER token (hidden): ')
+        result = backup_fictional_pilot(args.database, token, args.archive)
+        print('Credential-free FICTIONAL backup created:', result['archive'])
+        print('Archive SHA-256:', result['sha256'])
+        print('Fictional data is NOT encrypted; NEVER use real client data.')
+    elif args.command == 'restore':
+        from .fictional_pilot_backup import restore_fictional_pilot
+        result = restore_fictional_pilot(args.archive, args.database)
+        print('Fresh fictional database restored:', result['database'])
+        print('Original credentials were NOT copied. NEW tokens appear ONCE:')
+        for entry in result['accounts']:
+            print('Fictional user:',entry['user'],'NEW token:',entry['token'])
+        print('Store locally; do not paste tokens into messages.')
+        print('Local audit only; independent custody NOT verified.')
     elif args.command == 'status':
         token = getpass('Local fictional pilot token (hidden): ')
         try:

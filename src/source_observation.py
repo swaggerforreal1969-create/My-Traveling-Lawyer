@@ -20,7 +20,7 @@ class SourceObservation:
 
     def __init__(self, core):
         self.core = core
-        with core.lock, core.db:
+        with core.authorized_transaction():
             core.db.execute('''CREATE TABLE IF NOT EXISTS source_observation (
                 observation_id TEXT PRIMARY KEY, matter_id TEXT NOT NULL,
                 evidence_id TEXT NOT NULL, actor_id TEXT NOT NULL,
@@ -49,7 +49,7 @@ class SourceObservation:
             raise EvidenceInvalid('Observation must include a manual evidence note')
         if not isinstance(evidence_id, str) or len(evidence_id) != 32 or any(c not in '0123456789abcdef' for c in evidence_id):
             raise EvidenceInvalid('Invalid evidence identifier')
-        with self.core.lock, self.core.db:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             self.core._role(actor, matter_id, ('owner', 'editor'))
             source = self._source(matter_id, evidence_id)
@@ -72,7 +72,7 @@ class SourceObservation:
                     'current_legal_authority_verified': False, 'network_accessed': False}
 
     def history(self, token, matter_id, evidence_id):
-        with self.core.lock:
+        with self.core.authorized_transaction():
             actor = self.core._identity(token)
             self.core._role(actor, matter_id, ('owner', 'editor', 'viewer'))
             source = self._source(matter_id, evidence_id)

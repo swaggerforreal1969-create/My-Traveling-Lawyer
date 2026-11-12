@@ -8,7 +8,7 @@ No retries, pin advancement, fence clearance, deployment, or client data.
 import json
 from dataclasses import dataclass
 
-from .independent_checkpoint_boundary import PinnedCheckpoint, _digest, _hex
+from .independent_checkpoint_boundary import PinnedCheckpoint, _digest, _hex, _identity
 from .nonce_bound_custody import SCHEMA, FIELDS, EXACT
 from .provider_neutral_custody_client import AuthenticatedCustodyTransport
 from .secure_engine import Denied
@@ -34,6 +34,7 @@ class NonceBoundCustodyClientV2:
                 or type(predecessor.sequence) is not int
                 or predecessor.sequence < 0
                 or not _hex(predecessor.digest)
+                or not _identity(predecessor.signer_id)
                 or not callable(verify_signature)):
             raise Denied('V2 custody transport or trusted predecessor unavailable')
         self.transport=transport

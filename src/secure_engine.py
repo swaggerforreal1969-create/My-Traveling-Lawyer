@@ -74,8 +74,33 @@ class SecureCore:
         if 'last_seen_at' not in credential_cols:
             self.db.execute('ALTER TABLE credentials ADD COLUMN last_seen_at TEXT')
         self.db.execute('UPDATE credentials SET last_seen_at=? WHERE last_seen_at IS NULL', (datetime.now(timezone.utc).isoformat(),))
+        # Only explicitly initialized fictional pilots can defer the first desktop login.
+        # Existing credentials remain strict-idle by default.
+        credential_cols={r['name'] for r in self.db.execute('PRAGMA table_info(credentials)')}
+        if 'first_pilot_login_pending' not in credential_cols:
+            self.db.execute('ALTER TABLE credentials ADD COLUMN first_pilot_login_pending INTEGER NOT NULL DEFAULT 0')
         task_cols={r['name'] for r in self.db.execute('PRAGMA table_info(tasks)')}
         if 'version' not in task_cols:self.db.execute('ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
+
+    @contextmanager
+    def authorized_transaction(self):
+        """Serialize authorization and dependent database work across processes.
+
+        Nested calls on this core share the outer transaction. The outermost
+        caller owns BEGIN IMMEDIATE and the commit/rollback boundary.
+        """
+        with self.lock:
+            owns_transaction = not self.db.in_transaction
+            if owns_transaction:
+                self.db.execute('BEGIN IMMEDIATE')
+            try:
+                yield
+                if owns_transaction:
+                    self.db.commit()
+            except BaseException:
+                if owns_transaction:
+                    self.db.rollback()
+                raise
 
     def _audit(self, actor, action, target):
         at=datetime.now(timezone.utc).isoformat()
@@ -111,17 +136,21 @@ class SecureCore:
         if not isinstance(token,str) or len(token)>512 or len(token)<32: raise Denied('Access denied')
         digest=sha256(token.encode()).hexdigest()
         now=datetime.now(timezone.utc)
-        row=self.db.execute('''SELECT u.id,u.firm_id,c.last_seen_at FROM credentials c JOIN users u ON c.user_id=u.id
+        row=self.db.execute('''SELECT u.id,u.firm_id,c.last_seen_at,c.first_pilot_login_pending FROM credentials c JOIN users u ON c.user_id=u.id
             WHERE c.token_digest=? AND c.revoked=0 AND u.active=1 AND c.expires_at>?''',(digest,now.isoformat())).fetchone()
         if row is None: raise Denied('Access denied')
-        try:
-            last=datetime.fromisoformat(row['last_seen_at'])
-            if last.tzinfo is None or (now-last).total_seconds() >= self.IDLE_SECONDS or (last-now).total_seconds()>30:
+        if not row['first_pilot_login_pending']:
+            try:
+                last=datetime.fromisoformat(row['last_seen_at'])
+                if last.tzinfo is None or (now-last).total_seconds() >= self.IDLE_SECONDS or (last-now).total_seconds()>30:
+                    raise Denied('Access denied')
+            except (TypeError,ValueError):
                 raise Denied('Access denied')
-        except (TypeError,ValueError):
-            raise Denied('Access denied')
+        # A successful active authorization consumes the one-time onboarding
+        # allowance. Revocation and absolute expiry were checked above.
         if not self._passive_auth.get():
-            self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(now.isoformat(),digest))
+            self.db.execute('UPDATE credentials SET last_seen_at=?, first_pilot_login_pending=0 WHERE token_digest=?',
+                            (now.isoformat(),digest))
         return row
 
     def _role(self, identity, matter_id, allowed):
@@ -132,13 +161,25 @@ class SecureCore:
         return row
 
     def create_matter(self, token, title):
-        if not isinstance(title,str) or not (1<=len(title.strip())<=160):raise Invalid('Invalid title')
-        with self.lock, self.db:
-            u=self._identity(token); mid=str(uuid.uuid4())
-            self.db.execute('INSERT INTO matters(id,firm_id,title) VALUES(?,?,?)',(mid,u['firm_id'],title.strip()))
-            self.db.execute('INSERT INTO grants VALUES(?,?,?)',(mid,u['id'],'owner'))
-            self._audit(u['id'],'matter.create',mid)
-            return {'id':mid,'title':title.strip(),'version':1}
+        if not isinstance(title,str) or not (1<=len(title.strip())<=160):
+            raise Invalid('Invalid title')
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Matter admission requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                mid=str(uuid.uuid4())
+                self.db.execute('INSERT INTO matters(id,firm_id,title) VALUES(?,?,?)',
+                                (mid,u['firm_id'],title.strip()))
+                self.db.execute('INSERT INTO grants VALUES(?,?,?)',(mid,u['id'],'owner'))
+                self._audit(u['id'],'matter.create',mid)
+                result={'id':mid,'title':title.strip(),'version':1}
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def grant(self, token, matter_id, target_user, role, expected_version):
         """Reserve the SQLite writer before checking and changing owner permissions.
@@ -170,11 +211,21 @@ class SecureCore:
                 self.db.rollback()
                 raise
     def list_matters(self, token):
+        """Read the authorized matter list under one serialized DB snapshot."""
         with self.lock:
-            u=self._identity(token)
-            return [dict(x) for x in self.db.execute('''SELECT m.id,m.title,m.version,g.role
-                FROM matters m JOIN grants g ON m.id=g.matter_id
-                WHERE m.firm_id=? AND g.user_id=? ORDER BY m.id''',(u['firm_id'],u['id']))]
+            if self.db.in_transaction:
+                raise Invalid('Matter listing requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                result=[dict(x) for x in self.db.execute('''SELECT m.id,m.title,m.version,g.role
+                    FROM matters m JOIN grants g ON m.id=g.matter_id
+                    WHERE m.firm_id=? AND g.user_id=? ORDER BY m.id''',(u['firm_id'],u['id']))]
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def add_note(self, token, matter_id, text):
         """Hold the SQLite writer lock across credential/ACL admission and write.
@@ -202,31 +253,69 @@ class SecureCore:
                 raise
 
     def read_notes(self, token, matter_id):
+        """Keep credential, ACL and confidential-note reads in one transaction."""
         with self.lock:
-            u=self._identity(token); self._role(u,matter_id,('owner','editor','viewer'))
-            return [dict(x) for x in self.db.execute('SELECT id,text FROM notes WHERE matter_id=? ORDER BY id',(matter_id,))]
+            if self.db.in_transaction:
+                raise Invalid('Note reading requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                self._role(u,matter_id,('owner','editor','viewer'))
+                result=[dict(x) for x in self.db.execute(
+                    'SELECT id,text FROM notes WHERE matter_id=? ORDER BY id',(matter_id,))]
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def revoke_token(self, token):
-        with self.lock, self.db:
-            u=self._identity(token)
-            self.db.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sha256(token.encode()).hexdigest(),))
-            self._audit(u['id'],'credential.revoke',u['id'])
+        """Revoke only after serialized credential admission."""
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Token revocation requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                changed=self.db.execute(
+                    'UPDATE credentials SET revoked=1 WHERE token_digest=? AND revoked=0',
+                    (sha256(token.encode()).hexdigest(),))
+                if changed.rowcount != 1:
+                    raise Denied('Access denied')
+                self._audit(u['id'],'credential.revoke',u['id'])
+                self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def rotate_token(self, token):
-        """Authenticated demo rotation; never a password-recovery substitute."""
-        with self.lock, self.db:
-            u=self._identity(token)
-            replacement=token_urlsafe(32)
-            expiry=(datetime.now(timezone.utc)+timedelta(hours=12)).isoformat()
-            self.db.execute('INSERT INTO credentials(token_digest,user_id,expires_at) VALUES(?,?,?)',
-                            (sha256(replacement.encode()).hexdigest(),u['id'],expiry))
-            self.db.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',(sha256(token.encode()).hexdigest(),))
-            self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(datetime.now(timezone.utc).isoformat(),sha256(replacement.encode()).hexdigest()))
-            self._audit(u['id'],'credential.rotate',u['id'])
-            return {'token':replacement,'expires_at':expiry}
+        """Rotate only while holding the SQLite writer reservation."""
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Token rotation requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                replacement=token_urlsafe(32)
+                expiry=(datetime.now(timezone.utc)+timedelta(hours=12)).isoformat()
+                self.db.execute('INSERT INTO credentials(token_digest,user_id,expires_at) VALUES(?,?,?)',
+                                (sha256(replacement.encode()).hexdigest(),u['id'],expiry))
+                self.db.execute('UPDATE credentials SET revoked=1 WHERE token_digest=?',
+                                (sha256(token.encode()).hexdigest(),))
+                self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+                                (datetime.now(timezone.utc).isoformat(),
+                                 sha256(replacement.encode()).hexdigest()))
+                self._audit(u['id'],'credential.rotate',u['id'])
+                result={'token':replacement,'expires_at':expiry}
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def verify_audit(self):
-        with self.lock:
+        """Verify one stable audit-chain snapshot across independent processes."""
+        with self.authorized_transaction():
             previous='GENESIS'
             expected_seq=1
             for row in self.db.execute('SELECT * FROM audit_chain ORDER BY seq'):
@@ -240,44 +329,78 @@ class SecureCore:
             return True
 
     def create_task(self,token,matter_id,text,due_at):
-        if not isinstance(text,str) or not 1<=len(text.strip())<=200:raise Invalid('Invalid task')
+        if not isinstance(text,str) or not 1<=len(text.strip())<=200:
+            raise Invalid('Invalid task')
         try:
             due=datetime.fromisoformat(due_at.replace('Z','+00:00'))
             if due.tzinfo is None:raise ValueError()
             due=due.astimezone(timezone.utc).isoformat()
-        except (ValueError,AttributeError,TypeError):raise Invalid('Timezone-aware ISO deadline required')
-        with self.lock,self.db:
-            u=self._identity(token);self._role(u,matter_id,('owner','editor'))
-            tid=str(uuid.uuid4())
-            self.db.execute('INSERT INTO tasks(id,matter_id,text,due_at) VALUES(?,?,?,?)',(tid,matter_id,text.strip(),due))
-            self._audit(u['id'],'task.create',tid)
-            return {'id':tid,'matter_id':matter_id,'due_at':due}
+        except (ValueError,AttributeError,TypeError):
+            raise Invalid('Timezone-aware ISO deadline required')
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Task admission requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                self._role(u,matter_id,('owner','editor'))
+                tid=str(uuid.uuid4())
+                self.db.execute('INSERT INTO tasks(id,matter_id,text,due_at) VALUES(?,?,?,?)',
+                                (tid,matter_id,text.strip(),due))
+                self._audit(u['id'],'task.create',tid)
+                result={'id':tid,'matter_id':matter_id,'due_at':due}
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def dashboard(self,token):
+        """Return one authorization-consistent dashboard snapshot."""
         with self.lock:
-            u=self._identity(token)
-            matters=self.list_matters(token)
-            tasks=[dict(r) for r in self.db.execute("""SELECT t.id,t.text,t.due_at,t.version,m.title AS matter_title
-                FROM tasks t JOIN matters m ON t.matter_id=m.id JOIN grants g ON m.id=g.matter_id
-                WHERE m.firm_id=? AND g.user_id=? AND t.completed=0 ORDER BY t.due_at,t.id LIMIT 30""",
-                (u['firm_id'],u['id']))]
-            return {'matter_count':len(matters),'upcoming_tasks':tasks,'as_of':datetime.now(timezone.utc).isoformat(),
-                    'note':'Dates are user-entered; no court-rule calculation or automatic legal deadline assurance.'}
+            if self.db.in_transaction:
+                raise Invalid('Dashboard requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                matter_count=self.db.execute(
+                    'SELECT count(*) FROM matters m JOIN grants g ON m.id=g.matter_id '
+                    'WHERE m.firm_id=? AND g.user_id=?',(u['firm_id'],u['id'])).fetchone()[0]
+                tasks=[dict(r) for r in self.db.execute("""SELECT t.id,t.text,t.due_at,t.version,m.title AS matter_title
+                    FROM tasks t JOIN matters m ON t.matter_id=m.id JOIN grants g ON m.id=g.matter_id
+                    WHERE m.firm_id=? AND g.user_id=? AND t.completed=0 ORDER BY t.due_at,t.id LIMIT 30""",
+                    (u['firm_id'],u['id']))]
+                result={'matter_count':matter_count,'upcoming_tasks':tasks,
+                        'as_of':datetime.now(timezone.utc).isoformat(),
+                        'note':'Dates are user-entered; no court-rule calculation or automatic legal deadline assurance.'}
+                self.db.commit()
+                return result
+            except BaseException:
+                self.db.rollback()
+                raise
 
 
     def issue_recovery_code(self, token):
-        """Issue one local recovery code while authenticated; print once, store digest only.
+        """Issue a local recovery code under serialized credential admission.
 
         CLI/secure local workflow only. No recovery endpoint in HTTP.
         """
-        with self.lock, self.db:
-            u=self._identity(token)
-            code=token_urlsafe(40)
-            digest=sha256(code.encode()).hexdigest()
-            self.db.execute('INSERT INTO recovery_codes(user_id,code_digest,expires_at) VALUES(?,?,?)',
-                            (u['id'],digest,(datetime.now(timezone.utc)+timedelta(days=7)).isoformat()))
-            self._audit(u['id'],'recovery.issue',u['id'])
-            return code
+        with self.lock:
+            if self.db.in_transaction:
+                raise Invalid('Recovery-code issuance requires an independent transaction')
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                u=self._identity(token)
+                code=token_urlsafe(40)
+                digest=sha256(code.encode()).hexdigest()
+                self.db.execute('INSERT INTO recovery_codes(user_id,code_digest,expires_at) VALUES(?,?,?)',
+                                (u['id'],digest,(datetime.now(timezone.utc)+timedelta(days=7)).isoformat()))
+                self._audit(u['id'],'recovery.issue',u['id'])
+                self.db.commit()
+                return code
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def recover_offline(self, user_id, code):
         """Local-only recovery: consume previously generated code, revoke all prior sessions.
@@ -287,58 +410,57 @@ class SecureCore:
         if not isinstance(user_id,str) or not isinstance(code,str) or not (40<=len(code)<=256):
             raise Denied('Access denied')
         digest=sha256(code.encode()).hexdigest()
-        with self.lock,self.db:
-            row=self.db.execute("""SELECT r.user_id FROM recovery_codes r JOIN users u ON r.user_id=u.id
-                WHERE r.code_digest=? AND r.user_id=? AND r.used=0 AND r.expires_at>?
-                AND u.active=1""",(digest,user_id,datetime.now(timezone.utc).isoformat())).fetchone()
-            if row is None:raise Denied('Access denied')
-            updated=self.db.execute('UPDATE recovery_codes SET used=1 WHERE code_digest=? AND used=0',(digest,))
-            if updated.rowcount!=1:raise Denied('Access denied')
-            self.db.execute('UPDATE credentials SET revoked=1 WHERE user_id=?',(user_id,))
-            self.db.execute('UPDATE recovery_codes SET used=1 WHERE user_id=?',(user_id,))
-            token=token_urlsafe(32)
-            expiry=(datetime.now(timezone.utc)+timedelta(hours=12)).isoformat()
-            self.db.execute('INSERT INTO credentials(token_digest,user_id,expires_at) VALUES(?,?,?)',
-                            (sha256(token.encode()).hexdigest(),user_id,expiry))
-            self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',(datetime.now(timezone.utc).isoformat(),sha256(token.encode()).hexdigest()))
-            self._audit(user_id,'recovery.consume',user_id)
-            return {'token':token,'expires_at':expiry}
-
-    def complete_task(self,token,task_id,expected_version):
-        """Serialize credential, ACL, version and task mutation with writers.
-
-        BEGIN IMMEDIATE acquires the SQLite writer reservation BEFORE reading
-        session and ACL state. A second independent connection may revoke or
-        downgrade before this admission or after it commits, but cannot change
-        authority midway through the protected operation. No retry is made.
-        """
-        if not isinstance(task_id,str) or not (1<=len(task_id)<=64) or type(expected_version)!=int or expected_version<1:
-            raise Invalid('Invalid task completion request')
         with self.lock:
             if self.db.in_transaction:
-                raise Invalid('Task admission requires an independent transaction')
+                raise Invalid('Offline recovery requires an independent transaction')
             self.db.execute('BEGIN IMMEDIATE')
             try:
-                u=self._identity(token)
-                row=self.db.execute('SELECT matter_id,version,completed FROM tasks WHERE id=?',(task_id,)).fetchone()
+                row=self.db.execute("""SELECT r.user_id FROM recovery_codes r JOIN users u ON r.user_id=u.id
+                    WHERE r.code_digest=? AND r.user_id=? AND r.used=0 AND r.expires_at>?
+                    AND u.active=1""",(digest,user_id,datetime.now(timezone.utc).isoformat())).fetchone()
                 if row is None:raise Denied('Access denied')
-                self._role(u,row['matter_id'],('owner','editor'))
-                if row['version']!=expected_version:raise Stale('Version changed')
-                if row['completed']:raise Stale('Task already completed')
-                changed=self.db.execute('UPDATE tasks SET completed=1,version=version+1 WHERE id=? AND completed=0 AND version=?',
-                                        (task_id,expected_version))
-                if changed.rowcount!=1:raise Stale('Version changed')
-                self._audit(u['id'],'task.complete',task_id)
-                result={'task_id':task_id,'version':expected_version+1,'completed':True}
+                updated=self.db.execute('UPDATE recovery_codes SET used=1 WHERE code_digest=? AND used=0',(digest,))
+                if updated.rowcount!=1:raise Denied('Access denied')
+                self.db.execute('UPDATE credentials SET revoked=1 WHERE user_id=?',(user_id,))
+                self.db.execute('UPDATE recovery_codes SET used=1 WHERE user_id=?',(user_id,))
+                token=token_urlsafe(32)
+                expiry=(datetime.now(timezone.utc)+timedelta(hours=12)).isoformat()
+                self.db.execute('INSERT INTO credentials(token_digest,user_id,expires_at) VALUES(?,?,?)',
+                                (sha256(token.encode()).hexdigest(),user_id,expiry))
+                self.db.execute('UPDATE credentials SET last_seen_at=? WHERE token_digest=?',
+                                (datetime.now(timezone.utc).isoformat(),sha256(token.encode()).hexdigest()))
+                self._audit(user_id,'recovery.consume',user_id)
+                result={'token':token,'expires_at':expiry}
                 self.db.commit()
                 return result
             except BaseException:
                 self.db.rollback()
                 raise
 
+    def complete_task(self,token,task_id,expected_version,*,expected_matter_id=None):
+        """Atomically authorize and complete one task; optionally bind its matter."""
+        if not isinstance(task_id,str) or not (1<=len(task_id)<=64) or type(expected_version)!=int or expected_version<1:
+            raise Invalid('Invalid task completion request')
+        if expected_matter_id is not None and (
+                not isinstance(expected_matter_id,str) or not (1<=len(expected_matter_id)<=64)):
+            raise Invalid('Invalid expected matter')
+        with self.authorized_transaction():
+            u=self._identity(token)
+            row=self.db.execute('SELECT matter_id,version,completed FROM tasks WHERE id=?',(task_id,)).fetchone()
+            if row is None or (expected_matter_id is not None and row['matter_id'] != expected_matter_id):
+                raise Denied('Access denied')
+            self._role(u,row['matter_id'],('owner','editor'))
+            if row['version']!=expected_version:raise Stale('Version changed')
+            if row['completed']:raise Stale('Task already completed')
+            changed=self.db.execute('UPDATE tasks SET completed=1,version=version+1 WHERE id=? AND completed=0 AND version=?',
+                                    (task_id,expected_version))
+            if changed.rowcount!=1:raise Stale('Version changed')
+            self._audit(u['id'],'task.complete',task_id)
+            return {'task_id':task_id,'version':expected_version+1,'completed':True}
+
     def audit_head(self):
-        # Local audit head; not independently durable by itself.
-        with self.lock:
+        # Verification and head retrieval share one cross-process snapshot.
+        with self.authorized_transaction():
             if not self.verify_audit(): raise Invalid('Audit verification failed')
             row=self.db.execute('SELECT seq,row_hash FROM audit_chain ORDER BY seq DESC LIMIT 1').fetchone()
             return {'schema':'mtl.audit.head.v1','seq':row['seq'] if row else 0,

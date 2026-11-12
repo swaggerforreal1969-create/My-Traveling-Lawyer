@@ -12,7 +12,7 @@ class EvidenceInvalid(ValueError):
 class ResearchEvidence:
     def __init__(self, core):
         self.core=core
-        with core.lock, core.db:
+        with core.authorized_transaction():
             core.db.execute('''CREATE TABLE IF NOT EXISTS research_evidence (
               id TEXT PRIMARY KEY, matter_id TEXT NOT NULL, author_id TEXT NOT NULL,
               title TEXT NOT NULL, url TEXT NOT NULL, excerpt TEXT NOT NULL,
@@ -31,7 +31,7 @@ class ResearchEvidence:
 
     def add(self,token,matter_id,title,url,excerpt):
         title,url,excerpt=self.clean(title,url,excerpt)
-        with self.core.lock,self.core.db:
+        with self.core.authorized_transaction():
             ident=self.core._identity(token)
             self.core._role(ident,matter_id,('owner','editor'))
             entry_id=secrets.token_hex(16)
@@ -42,7 +42,7 @@ class ResearchEvidence:
             return {'id':entry_id,'content_digest':digest,'source_verified':False,'legal_authority_verified':False}
 
     def list(self,token,matter_id):
-        with self.core.lock:
+        with self.core.authorized_transaction():
             ident=self.core._identity(token)
             self.core._role(ident,matter_id,('owner','editor','viewer'))
             rows=self.core.db.execute('SELECT id,title,url,excerpt,content_digest,created_at FROM research_evidence WHERE matter_id=? ORDER BY created_at,id',(matter_id,)).fetchall()

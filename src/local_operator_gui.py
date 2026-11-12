@@ -1,7 +1,9 @@
 """Offline Tkinter attorney operator: actual mouse/keyboard UI, no HTTP.
 
 All sensitive commands delegate to PrivateAttorneyOperator / SecureCore. The UI
-never displays client notes, excerpts, task text, URLs, token or record IDs.
+never shows client notes, excerpts, task text, URLs, tokens or IDs in
+its main window. An explicitly opened private research dialog can display
+authorized fictional source text; it is cleared on hiding or access failure.
 Only experimental local SQLite databases, never real-client production use.
 Tkinter is loaded on launch, not during headless test/import.
 """
@@ -15,6 +17,7 @@ from .secure_engine import SecureCore, Denied, Invalid, Stale
 from .research_evidence import EvidenceInvalid
 from .attorney_research_workflow import RefreshUnresolved
 from .durable_local_write_fence import LocalWriteFence
+from .research_correction import ResearchCorrection
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,35 @@ class LocalOperatorController:
         index = self.operator.matters(self._token)
         self._matters = tuple(item['matter_id'] for item in index['matters'])
         return len(self._matters)
+
+    def private_matter_detail(self, position):
+        """One fresh authorized title read, never an implicit matter selection.
+
+        The anonymous matter index and its order must still match the
+        current actor's authorized matter list. Nothing reaches root status.
+        """
+        if type(position) is not int or not 0<=position<len(self._matters):
+            raise Invalid('Select an authorized matter to inspect')
+        original=self._matters[position]
+        core=self.operator.core
+        with core.authorized_transaction():
+            actor=core._identity(self._token)
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+            index=self.operator.matters(self._token)['matters']
+            current=tuple(item['matter_id'] for item in index)
+            if current!=self._matters or current[position]!=original:
+                raise Stale('Matter list changed; refresh before inspection')
+            core._role(actor,original,('owner','editor','viewer'))
+            row=core.db.execute(
+                'SELECT title,version FROM matters WHERE id=? AND firm_id=?',
+                (original,actor['firm_id'])).fetchone()
+            if (row is None or type(row['title']) is not str or
+                    not 1<=len(row['title'])<=160):
+                raise Denied('Matter title unavailable')
+            return {'title':row['title'],'version':row['version'],
+                    'role':index[position]['role'],
+                    'identity':original}
 
     def select(self, position):
         # Keep the visible matter list available for a deliberate selection,
@@ -136,6 +168,136 @@ class LocalOperatorController:
             self._durable_fence is not None and self._matter_id is not None
             and self._durable_fence.is_pending()))
 
+
+    def private_completed_tasks(self):
+        """Reauthorize and inspect completed tasks without granting write access.
+
+        Completed rows must have a matching, verified local task.complete
+        audit record. This is not independently witnessed finality.
+        """
+        if self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        core=self.operator.core
+        with core.authorized_transaction():
+            actor=core._identity(self._token)
+            core._role(actor,self._matter_id,('owner','editor','viewer'))
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+            rows=core.db.execute(
+                'SELECT id,text,due_at FROM tasks WHERE matter_id=? '
+                'AND completed=1 ORDER BY due_at,id LIMIT 102',
+                (self._matter_id,)).fetchall()
+            if len(rows)>100:
+                raise Invalid('Too many completed tasks; pagination required')
+            result=[]
+            for row in rows:
+                if (type(row['text']) is not str or
+                        not 1<=len(row['text'])<=200 or
+                        type(row['due_at']) is not str):
+                    raise Invalid('Invalid completed task details')
+                proof=core.db.execute(
+                    "SELECT 1 FROM audit_chain WHERE action='task.complete' "
+                    'AND target=? LIMIT 1',(row['id'],)).fetchone()
+                if proof is None:
+                    raise Denied('Completed task missing local audit record')
+                result.append((row['text'],row['due_at']))
+            return tuple(result)
+
+    def private_completed_tasks_page(self, page=0):
+        """Authorized, audit-checked, bounded completed history pages.
+
+        Page size is fixed at 20. Changes, revocation or revoked membership
+        are rechecked on every navigation and passive GUI privacy tick.
+        This is a local record, not independent custody or legal finality.
+        """
+        if type(page) is not int or not 0 <= page <= 100000:
+            raise Invalid('Invalid completed-history page')
+        if self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        core = self.operator.core
+        with core.authorized_transaction():
+            actor = core._identity(self._token)
+            core._role(actor, self._matter_id, ('owner', 'editor', 'viewer'))
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+            total = core.db.execute(
+                'SELECT count(*) AS total FROM tasks WHERE matter_id=? '
+                'AND completed=1', (self._matter_id,)).fetchone()['total']
+            pages = max(1, (total + 19) // 20)
+            if page >= pages:
+                raise Invalid('Completed-history page no longer exists')
+            rows = core.db.execute(
+                'SELECT id,text,due_at FROM tasks WHERE matter_id=? '
+                'AND completed=1 ORDER BY due_at,id LIMIT 20 OFFSET ?',
+                (self._matter_id, page * 20)).fetchall()
+            result = []
+            for row in rows:
+                if (type(row['text']) is not str or
+                        not 1 <= len(row['text']) <= 200 or
+                        type(row['due_at']) is not str):
+                    raise Invalid('Invalid completed task details')
+                proof = core.db.execute(
+                    "SELECT 1 FROM audit_chain WHERE action='task.complete' "
+                    'AND target=? LIMIT 1', (row['id'],)).fetchone()
+                if proof is None:
+                    raise Denied('Completed task missing local audit record')
+                result.append((row['text'], row['due_at']))
+            return {'page': page, 'pages': pages, 'total': total,
+                    'items': tuple(result)}
+
+    def private_action_detail(self, kind, position):
+        """Read one exact selectable work item under fresh authorization.
+
+        Read-only, no implicit grant: the stored position and identity must
+        match a fresh task/review queue in the same SQLite transaction.
+        """
+        if kind not in ('task', 'review') or type(position) is not int:
+            raise Invalid('Invalid work-item selection')
+        self._assert_no_uncertain_review()
+        if self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        selected=self._tasks if kind=='task' else self._reviews
+        if not 0<=position<len(selected):
+            raise Invalid('Select a current work item')
+        identity=selected[position]
+        core=self.operator.core
+        with core.authorized_transaction():
+            actor=core._identity(self._token)
+            core._role(actor,self._matter_id,('owner','editor'))
+            if not core.verify_audit():
+                raise Denied('Local audit verification failed')
+            if kind=='task':
+                current=self.operator.workflow.journey.workbench.matter(
+                    self._token,self._matter_id)
+                if not current['can_complete_tasks']:
+                    raise Denied('Task completion not authorized')
+                tasks=current['open_tasks']
+                if (position>=len(tasks) or
+                    (tasks[position]['task_id'],tasks[position]['version'])!=identity):
+                    raise Stale('Task changed; refresh before action')
+                item=tasks[position]
+                if (type(item['text']) is not str or
+                        type(item['user_entered_due_at']) is not str):
+                    raise Invalid('Invalid task details')
+                return {'kind':'task','identity':identity,
+                        'text':item['text'],
+                        'date':item['user_entered_due_at']}
+            queue=self.operator.reviewer_inbox(self._token,self._matter_id)['items']
+            if (position>=len(queue) or
+                (queue[position]['evidence_id'],queue[position]['observation_id'])!=identity):
+                raise Stale('Review changed; refresh before action')
+            evidence_id,observation_id=identity
+            dossier=self.private_research_dossier(evidence_id)
+            history=self.operator.workflow.observations.history(
+                self._token,self._matter_id,evidence_id)['observations']
+            latest=max(history,key=lambda x:(x['recorded_at'],x['observation_id']),
+                       default=None)
+            if latest is None or latest['observation_id']!=observation_id:
+                raise Stale('Review observation changed')
+            source=dossier['source']
+            return {'kind':'review','identity':identity,
+                    'title':source['title'],'url':source['url'],
+                    'note':latest['note']}
 
     def _create_authorized(self, kind, text, *, due_at=None):
         """Explicit local write with persistent conservative no-replay fencing.
@@ -365,6 +527,66 @@ class LocalOperatorController:
             raise EvidenceInvalid('Research selections ambiguous')
         return tuple(result)
 
+    def private_research_source(self, source_id):
+        """Reauthorize and integrity-check one saved source for private display.
+
+        This is read-only local fictional evidence, never verified law.
+        No source text or opaque identifier enters root status or logging.
+        """
+        if self._matter_id is None:
+            raise Invalid('Select an authorized matter first')
+        if (type(source_id) is not str or len(source_id) != 32
+                or any(ch not in '0123456789abcdef' for ch in source_id)):
+            raise Invalid('Invalid private source selection')
+        import hashlib
+        import json
+        with self.operator.core.authorized_transaction():
+            sources=self.operator.workflow.evidence.list(
+                self._token,self._matter_id)['sources']
+            matches=[x for x in sources if x.get('id')==source_id]
+            if len(matches)!=1:
+                raise Denied('Saved research source not available')
+            item=matches[0]
+            try:
+                title,url,excerpt=item['title'],item['url'],item['excerpt']
+                digest=hashlib.sha256(json.dumps(
+                    [title,url,excerpt],separators=(',',':')).encode()).hexdigest()
+                if digest!=item['content_digest']:
+                    raise EvidenceInvalid('Saved research source integrity changed')
+                if (type(title) is not str or type(url) is not str
+                        or type(excerpt) is not str):
+                    raise EvidenceInvalid('Saved research source invalid')
+            except (KeyError,TypeError,ValueError) as exc:
+                raise EvidenceInvalid('Saved research source unavailable') from exc
+            return {'title':title,'url':url,'excerpt':excerpt,
+                    'source_verified':False,'legal_authority_verified':False}
+
+    def private_research_dossier(self, source_id):
+        """One authorization snapshot for source, observations and second reviews.
+
+        Historic notes and decisions are privacy-sensitive. All backend
+        integrity checks must pass before any text can be rendered.
+        """
+        with self.operator.core.authorized_transaction():
+            source=self.private_research_source(source_id)
+            observations=self.operator.workflow.observations.history(
+                self._token,self._matter_id,source_id)['observations']
+            reviews=self.operator.workflow.reviews.history(
+                self._token,self._matter_id,source_id)['second_reviews']
+            links=ResearchCorrection(self.operator.core).history(
+                self._token,self._matter_id,source_id)['corrections']
+            correction_reasons={x['new_id']:x['reason'] for x in links}
+            return {'source':source,
+                    'observations':tuple(
+                        {'recorded_at':x['recorded_at'],'note':x['note'],
+                         'correction_reason':correction_reasons.get(x['observation_id'])}
+                        for x in observations[-20:]),
+                    'total_observations':len(observations),
+                    'reviews':tuple(
+                        {'recorded_at':x['recorded_at'],'decision':x['decision']}
+                        for x in reviews[-20:]),
+                    'total_reviews':len(reviews)}
+
     def _record_manual_research(self, kind, values):
         """One human-confirmed research write, one durable reservation.
 
@@ -392,7 +614,7 @@ class LocalOperatorController:
                 entries = self.available_research_sources()
                 if record_id not in entries:
                     raise Denied('Saved source not visible after authorization')
-            else:
+            elif kind == 'observation':
                 source_id, captured, note = values
                 made = self.operator.workflow.observations.capture(
                     self._token, self._matter_id, source_id, captured, note)
@@ -402,6 +624,19 @@ class LocalOperatorController:
                 if not any(x['observation_id'] == record_id
                            for x in history['observations']):
                     raise Denied('Saved observation not visible after authorization')
+            elif kind == 'correction':
+                source_id, old_id, captured, note, reason = values
+                correction = ResearchCorrection(core)
+                made = correction.record(self._token, self._matter_id, source_id,
+                                         old_id, captured, note, reason)
+                record_id = made['observation_id']
+                links = correction.history(self._token, self._matter_id,
+                                            source_id)['corrections']
+                if not any(x['new_id'] == record_id and x['old_id'] == old_id
+                           for x in links):
+                    raise Denied('Correction readback unverified')
+            else:
+                raise Invalid('Unrecognized manual research operation')
             if not core.verify_audit():
                 raise Denied('Local audit check failed after write')
             self._durable_fence.finish_confirmed(
@@ -415,7 +650,7 @@ class LocalOperatorController:
                     'Research saved and verified, but display refresh failed. '
                     'Do NOT repeat; reopen read only.')
             return ActionFeedback(kind + '_recorded',
-                ('Source' if kind == 'source' else 'Manual observation') +
+                ('Source' if kind == 'source' else 'Correction' if kind == 'correction' else 'Manual observation') +
                 ' saved. Research is NOT verified legal authority.')
         except Exception:
             # Unknown post-reservation outcome is never a safe replay invitation.
@@ -443,6 +678,34 @@ class LocalOperatorController:
             raise Denied('Source is not in currently authorized matter')
         return self._record_manual_research(
             'observation', (source_id, captured.strip(), note.strip()))
+
+    def latest_research_observation(self, source_id):
+        if source_id not in self.available_research_sources():
+            raise Denied('Source unavailable for correction')
+        ResearchCorrection(self.operator.core).history(
+            self._token,self._matter_id,source_id)
+        entries = self.operator.workflow.observations.history(
+            self._token,self._matter_id,source_id)['observations']
+        latest = max(entries, key=lambda x:(x['recorded_at'],x['observation_id']),
+                     default=None)
+        if latest is None:
+            raise Invalid('No observation exists to correct')
+        return latest['observation_id']
+
+    def correct_research_observation(self, source_id, old_id, captured,
+                                     note, reason, confirmed):
+        if not confirmed:
+            return ActionFeedback('cancelled','Cancelled; no write performed.')
+        if not isinstance(captured,str) or not 1 <= len(captured.strip()) <= 12000:
+            raise Invalid('Corrected observation required')
+        if not isinstance(note,str) or not 12 <= len(note.strip()) <= 1200:
+            raise Invalid('Corrected note must be 12–1200 characters')
+        if not isinstance(reason,str) or not 15 <= len(reason.strip()) <= 1200:
+            raise Invalid('Correction reason must be 15–1200 characters')
+        if self.latest_research_observation(source_id) != old_id:
+            raise Stale('Earlier observation changed')
+        return self._record_manual_research(
+            'correction',(source_id,old_id,captured.strip(),note.strip(),reason.strip()))
 
     def review(self, position, decision, note, confirmed):
         if not confirmed:
@@ -763,6 +1026,61 @@ class LocalOperatorController:
                               'Local review commit observed; independent custody not verified.')
 
 
+def _format_private_completed_tasks(rows):
+    """Read-only fictional task history, without raw row IDs."""
+    lines=['Completed tasks — local record only',
+           'User-entered dates are NOT verified court deadlines.',
+           'Local audit checked; external custody NOT verified.','']
+    if not rows:
+        lines.append('No completed tasks in this matter.')
+    for i,(title,due_at) in enumerate(rows,1):
+        lines.extend([str(i)+'. '+title,
+                      'User-entered date: '+due_at,''])
+    return '\n'.join(lines)
+
+
+def _format_private_action_detail(detail):
+    """Never put private task/review text in the main window or log."""
+    if detail['kind']=='task':
+        return ('Task to complete:\n'+detail['text']+'\n\n'
+                'User-entered date (NOT a court deadline): '
+                +detail['date']+'\n\n'
+                'Review the task before authorizing a single completion.')
+    return ('Second-human review of:\n'+detail['title']+'\n'
+            'Website (not opened): '+detail['url']+'\n\n'
+            'Existing human observation note:\n'+detail['note']
+            +'\n\nThis is NOT verified legal authority. '
+            'Your decision will be recorded for this exact observation.')
+
+
+def _format_private_research_dossier(dossier):
+    """Private-only text: no record IDs, tokens or unsupported legal claims."""
+    source=dossier['source']
+    lines=['Title: '+source['title'],
+           'Website (not opened): '+source['url'], '',
+           'User-entered excerpt:',source['excerpt'], '',
+           'Manual observation history (latest 20 of '
+           +str(dossier['total_observations'])+'):']
+    if not dossier['observations']:
+        lines.append('No saved observations.')
+    for item in dossier['observations']:
+        lines.extend([item['recorded_at'], 'Human note: '+item['note']])
+        if item.get('correction_reason'):
+            lines.extend(['CORRECTION — original entry remains on record.',
+                          'Reason: '+item['correction_reason'],
+                          'Requires a new independent second review.'])
+        lines.append('')
+    lines.append('Second-human decisions (latest 20 of '
+                 +str(dossier['total_reviews'])+'):')
+    if not dossier['reviews']:
+        lines.append('No second-human decision recorded.')
+    for item in dossier['reviews']:
+        lines.extend([item['recorded_at'],'Decision: '+item['decision'], ''])
+    lines.extend(['', 'Local record integrity checked; NOT authenticated legal '
+                  'authority or independent custody.'])
+    return '\n'.join(lines)
+
+
 def launch_gui(core, token, *, run_mainloop=True):
     """Real Tk controls. Disabled write buttons until a current row selected."""
     import tkinter as tk
@@ -910,6 +1228,13 @@ def launch_gui(core, token, *, run_mainloop=True):
                     clear_all_visible_work()
                     status.set('Matter changed. Select it again after reauthorization.')
                     return
+            # A private saved-source view is valid only while the current
+            # account, matter, source identity and source digest still match.
+            # Never preserve its confidential text after a silent source change.
+            for private_form in private_forms[:]:
+                verifier=getattr(private_form,'private_source_check',None)
+                if callable(verifier) and private_form.winfo_exists():
+                    verifier()
             # An already displayed portfolio must not retain old counts after
             # an authorized matter-index/task-count change.
             existing = portfolio_text.get('1.0', 'end-1c')
@@ -1082,8 +1407,17 @@ def launch_gui(core, token, *, run_mainloop=True):
                 clear_stale_actions()
                 return
             decision = choice.get()
+            try:
+                detail=controller.private_action_detail('review',position)
+                if detail['identity']!=identity:
+                    raise Stale('Selected review changed')
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                status.set('Selected review changed or access denied. Refresh before action.')
+                clear_stale_actions()
+                return
             if not messagebox.askyesno('Confirm second-human review',
-                                       'Record this one review? No automatic retry.'):
+                                       _format_private_action_detail(detail)
+                                       +'\\n\\nRecord this review? No automatic retry.'):
                 status.set('Cancelled; no write performed.')
                 return
             try:
@@ -1122,8 +1456,17 @@ def launch_gui(core, token, *, run_mainloop=True):
             except (IndexError, TypeError):
                 clear_stale_actions()
                 return
+            try:
+                detail=controller.private_action_detail('task',position)
+                if detail['identity']!=identity:
+                    raise Stale('Selected task changed')
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                status.set('Selected task changed or access denied. Refresh before action.')
+                clear_stale_actions()
+                return
             if not messagebox.askyesno('Confirm task completion',
-                                       'Complete this one task? No automatic retry.'):
+                                       _format_private_action_detail(detail)
+                                       +'\\n\\nComplete this task? No automatic retry.'):
                 status.set('Cancelled; no write performed.')
                 return
             try:
@@ -1391,6 +1734,88 @@ def launch_gui(core, token, *, run_mainloop=True):
         fields[specifications[0][0]].focus_set()
 
 
+    def view_saved_source():
+        """Display one locally saved fictional excerpt without any network call."""
+        if write_confirmation['active'] or controller._matter_id is None:
+            status.set('Select an authorized matter before viewing saved research.')
+            return
+        try:
+            named=controller.identifiable_research_sources()
+            if not named:
+                status.set('No saved research source in this matter.')
+                return
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Research access denied. Reauthenticate.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Saved research source — read only')
+        dialog.transient(root)
+        dialog.geometry('680x500')
+        dialog.minsize(480,320)
+        private_forms.append(dialog)
+        form=ttk.Frame(dialog,padding=10)
+        form.pack(fill='both',expand=True)
+        ttk.Label(form,text='Fictional research and review history — NOT verified law',
+                  wraplength=560).pack(anchor='w')
+        chooser=ttk.Combobox(form,state='readonly',
+                 values=tuple(label for _,label in named))
+        chooser.pack(fill='x',pady=5)
+        detail=tk.Text(form,wrap='word',height=14,undo=False)
+        detail.pack(fill='both',expand=True)
+        detail.configure(state='disabled')
+        bound_matter=controller._matter_id
+        selected={'id':None,'text':None}
+        def load_selection(event=None):
+            detail.configure(state='normal')
+            detail.delete('1.0','end')
+            detail.configure(state='disabled')
+            selected['id']=None
+            selected['text']=None
+            if controller._matter_id != bound_matter:
+                raise Denied('Matter selection changed')
+            fresh=controller.identifiable_research_sources()
+            if fresh!=named:
+                raise Denied('Source selections changed')
+            index=chooser.current()
+            if (index<0 or index>=len(named)
+                    or chooser.get()!=named[index][1]):
+                raise Denied('Source selection changed')
+            readable=_format_private_research_dossier(
+                controller.private_research_dossier(named[index][0]))
+            selected['id']=named[index][0]
+            selected['text']=readable
+            detail.configure(state='normal')
+            detail.insert('1.0',readable)
+            detail.configure(state='disabled')
+        def private_source_check():
+            if controller._matter_id != bound_matter:
+                raise Denied('Research matter no longer authorized')
+            fresh=controller.identifiable_research_sources()
+            if fresh!=named:
+                raise Denied('Research source list changed')
+            idx=chooser.current()
+            if (idx<0 or idx>=len(named) or selected['id']!=named[idx][0]
+                    or chooser.get()!=named[idx][1]):
+                raise Denied('Research selection changed')
+            expected=_format_private_research_dossier(
+                controller.private_research_dossier(selected['id']))
+            if expected!=selected['text']:
+                raise Denied('Research text changed')
+        def choose(event=None):
+            try:
+                load_selection()
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                clear_all_visible_work()
+                status.set('Private source hidden. Reauthorize before viewing.')
+        dialog.private_source_check=private_source_check
+        chooser.bind('<<ComboboxSelected>>',choose)
+        ttk.Button(form,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
+        chooser.current(0)
+        choose()
+        if dialog.winfo_exists():
+            chooser.focus_set()
+
     def allow_second_review_dialog():
         if write_confirmation['active'] or controller.has_recovery():
             status.set('Unresolved write or confirmation active. No permission change.')
@@ -1465,13 +1890,306 @@ def launch_gui(core, token, *, run_mainloop=True):
         dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
         choices.focus_set()
 
+    def correct_latest_observation_dialog():
+        """Private fictional correction with reauthorization after confirmation."""
+        if write_confirmation['active'] or controller.has_recovery():
+            status.set('Unresolved write or confirmation active. No correction.')
+            return
+        if controller._matter_id is None:
+            status.set('Select an authorized matter before correcting research.')
+            return
+        try:
+            named = controller.identifiable_research_sources()
+            if not named:
+                status.set('Record an observation before correcting it.')
+                return
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Research correction access denied.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Correct latest observation')
+        dialog.transient(root)
+        dialog.geometry('650x580')
+        dialog.minsize(480,420)
+        private_forms.append(dialog)
+        form=ttk.Frame(dialog,padding=10)
+        form.pack(fill='both',expand=True)
+        ttk.Label(form,text='Fictional research only. The original is kept; '
+                  'a different human must review the new record.',
+                  wraplength=570).pack(anchor='w')
+        chooser=ttk.Combobox(form,state='readonly',
+                 values=tuple(label for _,label in named))
+        chooser.current(0)
+        chooser.pack(fill='x')
+        fields=[]
+        for label in ('Corrected fictional observation text',
+                      'Updated human note (12–1200 characters)',
+                      'Reason for correction (15–1200 characters)'):
+            ttk.Label(form,text=label).pack(anchor='w')
+            field=tk.Text(form,height=5,wrap='word',undo=False)
+            field.pack(fill='both',expand=True)
+            fields.append(field)
+        initial_matter=controller._matter_id
+        def save_correction():
+            if write_confirmation['active']:
+                return
+            write_confirmation['active']=True
+            try:
+                idx=chooser.current()
+                if (controller._matter_id!=initial_matter or
+                    idx<0 or idx>=len(named) or
+                    chooser.get()!=named[idx][1] or
+                    controller.identifiable_research_sources()!=named):
+                    raise Stale('Research source changed')
+                source_id=named[idx][0]
+                old_id=controller.latest_research_observation(source_id)
+                captured,note,reason=tuple(
+                    field.get('1.0','end-1c') for field in fields)
+                if not messagebox.askyesno('Confirm research correction',
+                     'Save a corrected version for '+named[idx][1]+
+                     '? The original stays saved. Another person must review '
+                     'the new version.',parent=dialog):
+                    return
+                if (controller._matter_id!=initial_matter or
+                    controller.has_recovery() or chooser.current()!=idx or
+                    chooser.get()!=named[idx][1] or
+                    controller.identifiable_research_sources()!=named or
+                    controller.latest_research_observation(source_id)!=old_id):
+                    raise Stale('Source or observation changed while confirming')
+                result=controller.correct_research_observation(
+                    source_id,old_id,captured,note,reason,True)
+                for field in fields:
+                    field.delete('1.0','end')
+                dialog.destroy()
+                status.set(result.message)
+                if result.status=='correction_recorded':
+                    display_counts()
+                    status.set('Correction saved. Independent second review required.')
+                else:
+                    clear_stale_actions()
+                    messagebox.showwarning('Research correction unresolved',
+                                           result.message,parent=root)
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                status.set('Correction rejected. No new write authorized.')
+            finally:
+                write_confirmation['active']=False
+                update_controls()
+        ttk.Button(form,text='Save correction',
+                   command=save_correction).pack(side='left',pady=8)
+        ttk.Button(form,text='Cancel',command=dialog.destroy).pack(side='right',pady=8)
+        dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
+        fields[0].focus_set()
+
     research_menu=tk.Menu(root,tearoff=False)
     research_menu.add_command(label='Add manual source',
         command=lambda: research_entry('source'))
     research_menu.add_command(label='Record manual observation',
         command=lambda: research_entry('observation'))
+    research_menu.add_command(label='View saved source (read only)',
+        command=view_saved_source)
+    research_menu.add_command(label='Correct latest observation',
+        command=correct_latest_observation_dialog)
     root_menu.add_cascade(label='Research',menu=research_menu)
     root_menu.add_command(label='Allow second reviewer',command=allow_second_review_dialog)
+    def inspect_selected_action(kind):
+        """Private read-only examination of the exact selected task or review."""
+        widget=task_list if kind=='task' else review_list
+        if not widget.curselection():
+            status.set('Select a '+kind+' before opening private details.')
+            return
+        try:
+            position=widget.curselection()[0]
+            detail=controller.private_action_detail(kind,position)
+            rendered=_format_private_action_detail(detail)
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Work item changed or access denied. Reauthenticate.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Private '+kind+' details — read only')
+        dialog.transient(root)
+        dialog.geometry('620x380')
+        dialog.minsize(480,280)
+        private_forms.append(dialog)
+        holder=ttk.Frame(dialog,padding=10)
+        holder.pack(fill='both',expand=True)
+        content=tk.Text(holder,wrap='word',undo=False)
+        content.pack(fill='both',expand=True)
+        content.insert('1.0',rendered)
+        content.configure(state='disabled')
+        def verify_private_action():
+            if (tuple(widget.curselection())!=(position,)
+                or controller.private_action_detail(kind,position)!=detail):
+                raise Denied('Selected private work item changed')
+        dialog.private_source_check=verify_private_action
+        ttk.Button(holder,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
+        content.focus_set()
+
+    def inspect_selected_matter():
+        """Private matter identity preview before entering the matter."""
+        if not matter_list.curselection():
+            status.set('Select a matter number before private inspection.')
+            return
+        position=matter_list.curselection()[0]
+        try:
+            details=controller.private_matter_detail(position)
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Matter list changed or access denied. Reauthenticate.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Private matter details — read only')
+        dialog.transient(root)
+        dialog.geometry('570x290')
+        dialog.minsize(460,230)
+        private_forms.append(dialog)
+        holder=ttk.Frame(dialog,padding=10)
+        holder.pack(fill='both',expand=True)
+        ttk.Label(holder,text='Authorized fictional matter — read only').pack(anchor='w')
+        text=tk.Text(holder,wrap='word',undo=False,height=7)
+        text.pack(fill='both',expand=True)
+        text.insert('1.0','Matter title: '+details['title']+'\n'
+                    'Your permission: '+details['role']+'\n\n'
+                    'Close this window and choose Select matter to open it.')
+        text.configure(state='disabled')
+        def verify_private_matter():
+            if (tuple(matter_list.curselection())!=(position,) or
+                    controller.private_matter_detail(position)!=details):
+                raise Denied('Matter selection or authorization changed')
+        dialog.private_source_check=verify_private_matter
+        ttk.Button(holder,text='Close',command=dialog.destroy).pack(anchor='e',pady=6)
+        text.focus_set()
+
+    def inspect_completed_tasks():
+        """Page through confidential history without weakening authorization."""
+        if controller._matter_id is None:
+            status.set('Select a matter before inspecting completed tasks.')
+            return
+        bound_matter=controller._matter_id
+        try:
+            snapshot=controller.private_completed_tasks_page(0)
+        except (Denied,Invalid,Stale,EvidenceInvalid):
+            clear_all_visible_work()
+            status.set('Completed-task history unavailable. Reauthenticate.')
+            return
+        dialog=tk.Toplevel(root)
+        dialog.title('Completed tasks — read only')
+        dialog.transient(root)
+        dialog.geometry('650x430')
+        dialog.minsize(470,280)
+        private_forms.append(dialog)
+        holder=ttk.Frame(dialog,padding=10)
+        holder.pack(fill='both',expand=True)
+        detail=tk.Text(holder,wrap='word',undo=False)
+        detail.pack(fill='both',expand=True)
+        current={'snapshot':snapshot}
+        controls=ttk.Frame(holder)
+        controls.pack(fill='x',pady=6)
+        def display_page():
+            page=current['snapshot']
+            detail.configure(state='normal')
+            detail.delete('1.0','end')
+            detail.insert('1.0',_format_private_completed_tasks(page['items'])
+                          +'\nPage '+str(page['page']+1)+' of '+str(page['pages'])
+                          +' ('+str(page['total'])+' completed tasks)')
+            detail.configure(state='disabled')
+            previous.configure(state='normal' if page['page'] else 'disabled')
+            following.configure(state='normal'
+                                if page['page']+1<page['pages'] else 'disabled')
+        def navigate(delta):
+            try:
+                if controller._matter_id!=bound_matter:
+                    raise Denied('Matter changed')
+                next_page=controller.private_completed_tasks_page(
+                    current['snapshot']['page']+delta)
+                current['snapshot']=next_page
+                display_page()
+            except (Denied,Invalid,Stale,EvidenceInvalid):
+                dialog.destroy()
+                clear_all_visible_work()
+                status.set('Completed-task history changed. Reauthenticate.')
+        previous=ttk.Button(controls,text='Previous page',
+                            command=lambda:navigate(-1))
+        previous.pack(side='left')
+        following=ttk.Button(controls,text='Next page',
+                             command=lambda:navigate(1))
+        following.pack(side='left',padx=8)
+        ttk.Button(controls,text='Close',command=dialog.destroy).pack(side='right')
+        display_page()
+        def verify_completed_history():
+            if (controller._matter_id!=bound_matter or
+                    controller.private_completed_tasks_page(
+                        current['snapshot']['page'])!=current['snapshot']):
+                raise Denied('Completed task history or authorization changed')
+        dialog.private_source_check=verify_completed_history
+        detail.focus_set()
+
+    inspect_menu=tk.Menu(root,tearoff=False)
+    inspect_menu.add_command(label='Selected matter (read only)',
+                             command=inspect_selected_matter)
+    inspect_menu.add_command(label='Selected task (read only)',
+                             command=lambda: inspect_selected_action('task'))
+    inspect_menu.add_command(label='Selected review (read only)',
+                             command=lambda: inspect_selected_action('review'))
+    inspect_menu.add_command(label='Completed tasks (read only)',
+                             command=inspect_completed_tasks)
+    root_menu.add_cascade(label='Inspect',menu=inspect_menu)
+
+    def show_fictional_practice_walkthrough():
+        """Plain-language, in-app practice directions; no account data read."""
+        # This view never uses real client data or substitutes for acceptance.
+        # As a tracked private dialog it closes automatically when access
+        # is revoked, the app is hidden, or the current work is cleared.
+        dialog = tk.Toplevel(root)
+        dialog.title('Fictional practice walkthrough')
+        dialog.transient(root)
+        dialog.geometry('660x490')
+        dialog.minsize(480,320)
+        private_forms.append(dialog)
+        form = ttk.Frame(dialog,padding=12)
+        form.pack(fill='both',expand=True)
+        ttk.Label(form,text='Practice only — never enter real client information',
+                  wraplength=600).pack(anchor='w')
+        guide = tk.Text(form,wrap='word',undo=False,takefocus=True)
+        guide.pack(fill='both',expand=True,pady=8)
+        directions = (
+            'MY TRAVELING LAWYER — FICTIONAL PRACTICE\n\n'
+            'Use only made-up cases. Nothing here gives legal advice.\n\n'
+            '1. Click Workload (read only) to see an authorized overview.\n\n'
+            '2. Select a matter in the list and click Select matter.\n\n'
+            '3. Open Inspect > Selected matter (read only) to review the details.\n\n'
+            '4. Open Research > Add manual source to enter a made-up source. '
+            'The program does not check the website.\n\n'
+            '5. Open Research > Record manual observation to add a note '
+            'about that source. Click Save manual entry only when ready.\n\n'
+            '6. Use Research > Correct latest observation to fix a mistaken '
+            'entry without deleting the original. A new review is needed. '
+            'Open Research > View saved source (read only) to inspect '
+            'the saved source and research history.\n\n'
+            '7. The matter owner may choose Allow second reviewer. '
+            'A different authorized account records a decision with '
+            'Record review.\n\n'
+            '8. Select a fictional task and click Complete task. '
+            'Check the result using Refresh and Inspect > Completed tasks '
+            '(read only).\n\n'
+            '9. Close the program, reopen your fictional database, and '
+            'check Workload (read only). Do not repeat an action if the '
+            'program says its result is uncertain.\n\n'
+            'If an action fails, record only the step number and the '
+            'error wording. Never share access codes or private case text.'
+        )
+        guide.insert('1.0',directions)
+        guide.configure(state='disabled')
+        ttk.Button(form,text='Close walkthrough',
+                   command=dialog.destroy).pack(anchor='e')
+        guide.focus_set()
+
+    help_menu = tk.Menu(root,tearoff=False)
+    help_menu.add_command(label='Fictional practice walkthrough',
+                          command=show_fictional_practice_walkthrough)
+    root_menu.add_cascade(label='Help',menu=help_menu)
+
 
     portfolio_button = ttk.Button(buttons,text='Workload (read only)',
                                   command=show_portfolio)

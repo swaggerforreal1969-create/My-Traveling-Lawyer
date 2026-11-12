@@ -7,12 +7,14 @@ from src.nonce_bound_custody import SCHEMA
 from src.provider_neutral_custody_client import AuthenticatedCustodyTransport
 from src.v2_custody_transport import NonceBoundCustodyClientV2
 from src.secure_engine import Denied
-from test_nonce_bound_custody import NonceBoundReceiptTests, PIN, verify
+import test_nonce_bound_custody as _fixture
+PIN = _fixture.PIN
+verify = _fixture.verify
 
 
 class V2TransportTests(unittest.TestCase):
     def setUp(self):
-        self.fixture=NonceBoundReceiptTests()
+        self.fixture=_fixture.NonceBoundReceiptTests()
         self.fixture.setUp()
         self.addCleanup(self.fixture.tearDown)
         self.events=self.fixture.ops
@@ -133,6 +135,24 @@ class V2TransportTests(unittest.TestCase):
     def test_history_window_fails_closed(self):
         with self.assertRaises(Denied):self.read(max_events=2)
         with self.assertRaises(Denied):self.read(max_events=0)
+
+
+    def test_untrusted_predecessor_signer_id_rejected_before_exchange(self):
+        for signer in ("", "invalid signer", "?"*81, None, False):
+            with self.subTest(signer=signer), self.assertRaises(Denied):
+                NonceBoundCustodyClientV2(
+                    transport=self.wire,
+                    predecessor=PinnedCheckpoint(PIN.sequence,PIN.digest,signer),
+                    verify_signature=verify)
+        self.assertEqual(self.calls, [])
+
+    def test_invalid_predecessor_signer_never_admits_operation(self):
+        with self.assertRaises(Denied):
+            NonceBoundCustodyClientV2(
+                transport=self.wire,
+                predecessor=PinnedCheckpoint(PIN.sequence,PIN.digest,"not approved"),
+                verify_signature=verify)
+        self.assertNotIn("v2_admit", self.calls)
 
     def test_transport_authentication_is_contract_not_real_independence(self):
         with self.assertRaises(Denied):

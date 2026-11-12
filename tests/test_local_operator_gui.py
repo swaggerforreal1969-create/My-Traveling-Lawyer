@@ -48,6 +48,203 @@ class GraphicalOperatorControllerTests(unittest.TestCase):
             'SELECT count(*) FROM audit_chain WHERE action=?',(action,)).fetchone()[0]
 
 
+    def test_private_matter_preview_is_authorized_and_read_only(self):
+        before=self.core.db.execute('SELECT count(*) FROM audit_chain').fetchone()[0]
+        self.assertEqual(self.client.list_matters(),1)
+        detail=self.client.private_matter_detail(0)
+        self.assertEqual(detail['title'],'SECRET CLIENT CASE')
+        self.assertEqual(detail['role'],'editor')
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0],before)
+        self.assertIsNone(self.client._matter_id)
+        outsider=LocalOperatorController(self.core,self.outside)
+        self.assertEqual(outsider.list_matters(),0)
+        with self.assertRaises(Invalid):
+            outsider.private_matter_detail(0)
+
+    def test_private_matter_preview_denies_stale_grant_and_reordered_index(self):
+        self.client.list_matters()
+        self.core.db.execute(
+            'DELETE FROM grants WHERE matter_id=? AND user_id=?',
+            (self.mid,self.reviewer_id))
+        with self.assertRaises((Denied,Stale)):
+            self.client.private_matter_detail(0)
+        # A newly inserted authorized matter changes the current index.
+        self.core.db.execute(
+            'INSERT INTO grants VALUES(?,?,?)',
+            (self.mid,self.reviewer_id,'editor'))
+        self.core.db.commit()
+        self.core.create_matter(self.reviewer,'SECOND FICTIONAL MATTER')
+        with self.assertRaises(Stale):
+            self.client.private_matter_detail(0)
+
+    def test_private_completed_history_real_write_audit_and_restart(self):
+        self.select()
+        self.assertEqual(self.client.private_completed_tasks(),())
+        before=self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0]
+        self.core.complete_task(self.reviewer,self.task['id'],1,
+                                expected_matter_id=self.mid)
+        history=self.client.private_completed_tasks()
+        self.assertEqual(history,(('SECRET PRIVATE TASK',self.task['due_at']),))
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0],before+1)
+        self.assertTrue(self.core.verify_audit())
+        self.core.close()
+        self.core=SecureCore(Path(self.tmp.name)/'fictional.sqlite3')
+        reopened=LocalOperatorController(self.core,self.reviewer)
+        reopened.list_matters()
+        reopened.select(0)
+        self.assertEqual(reopened.private_completed_tasks(),history)
+
+    def test_private_completed_history_denies_other_firm_and_unwitnessed_row(self):
+        self.select()
+        other=LocalOperatorController(self.core,self.outside)
+        other.list_matters()
+        with self.assertRaises(Invalid):
+            other.private_completed_tasks()
+        self.core.db.execute(
+            'UPDATE tasks SET completed=1 WHERE id=?',(self.task['id'],))
+        with self.assertRaises(Denied):
+            self.client.private_completed_tasks()
+
+    def test_private_completed_history_pages_more_than_twenty_without_replay(self):
+        self.select()
+        for i in range(21):
+            task=self.core.create_task(
+                self.reviewer,self.mid,'PRIVATE PAGE TASK '+str(i).zfill(2),
+                '2026-11-10T00:00:00Z')
+            self.core.complete_task(self.reviewer,task['id'],1,
+                                    expected_matter_id=self.mid)
+        first=self.client.private_completed_tasks_page()
+        second=self.client.private_completed_tasks_page(1)
+        self.assertEqual((first['page'],first['pages'],first['total']), (0,2,21))
+        self.assertEqual((len(first['items']),len(second['items'])),(20,1))
+        first_names={title for title,_ in first['items']}
+        second_names={title for title,_ in second['items']}
+        self.assertFalse(first_names & second_names)
+        self.assertEqual(first_names | second_names,
+                         {'PRIVATE PAGE TASK '+str(i).zfill(2) for i in range(21)})
+        self.assertTrue(self.core.verify_audit())
+        for bad in (-1, True, 2, 1.0):
+            with self.assertRaises(Invalid):
+                self.client.private_completed_tasks_page(bad)
+        viewer=LocalOperatorController(self.core,self.viewer)
+        viewer.list_matters()
+        viewer.select(0)
+        self.assertEqual(viewer.private_completed_tasks_page(1),second)
+        outsider=LocalOperatorController(self.core,self.outside)
+        with self.assertRaises(Invalid):
+            outsider.private_completed_tasks_page(0)
+        # A fabricated completed row without task.complete audit must be denied
+        # even when it falls on a later page.
+        fake=self.core.create_task(
+            self.reviewer,self.mid,'PRIVATE UNWITNESSED PAGE TASK',
+            '2026-11-10T00:00:00Z')
+        self.core.db.execute('UPDATE tasks SET completed=1 WHERE id=?',
+                             (fake['id'],))
+        ordered=[r['id'] for r in self.core.db.execute(
+            'SELECT id FROM tasks WHERE matter_id=? AND completed=1 '
+            'ORDER BY due_at,id',(self.mid,)).fetchall()]
+        affected_page=ordered.index(fake['id'])//20
+        with self.assertRaises(Denied):
+            self.client.private_completed_tasks_page(affected_page)
+        # The other page is still readable; only the affected page fails
+        # its local audit proof rather than silently hiding a bad record.
+        self.assertEqual(len(self.client.private_completed_tasks_page(
+            1-affected_page)['items']),20 if affected_page==1 else 2)
+
+    def test_private_source_readback_authorized_and_integrity_checked(self):
+        self.select()
+        original=self.client.private_research_source(self.eid)
+        self.assertEqual(original['title'],'SECRET RESEARCH TITLE')
+        self.assertEqual(original['excerpt'],'SECRET EXCERPT')
+        self.assertFalse(original['source_verified'])
+        self.assertFalse(original['legal_authority_verified'])
+        self.assertNotIn('id',original)
+        self.assertTrue(self.core.verify_audit())
+        outsider=LocalOperatorController(self.core,self.outside)
+        outsider.list_matters()
+        with self.assertRaises(Invalid):
+            outsider.private_research_source(self.eid)
+        with self.assertRaises(Invalid):
+            self.client.private_research_source('not-an-id')
+        with self.assertRaises(Denied):
+            self.client.private_research_source('f'*32)
+
+    def test_private_source_readback_detects_tampered_excerpt(self):
+        self.select()
+        self.core.db.execute('UPDATE research_evidence SET excerpt=? WHERE id=?',
+                             ('TAMPERED FICTIONAL EXCERPT',self.eid))
+        with self.assertRaises(EvidenceInvalid):
+            self.client.private_research_source(self.eid)
+
+    def test_private_research_dossier_shows_integrity_checked_human_history(self):
+        self.select()
+        before=self.core.db.execute('SELECT count(*) FROM audit_chain').fetchone()[0]
+        dossier=self.client.private_research_dossier(self.eid)
+        self.assertEqual(dossier['source']['excerpt'],'SECRET EXCERPT')
+        self.assertEqual(dossier['total_observations'],1)
+        self.assertEqual(dossier['total_reviews'],0)
+        self.assertEqual(dossier['observations'][0]['note'],
+                         'Manual observation from fictional document')
+        self.assertNotIn('actor_id',dossier['observations'][0])
+        self.assertNotIn('observation_id',dossier['observations'][0])
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM audit_chain').fetchone()[0],before)
+        self.client.operator.workflow.reviews.record(
+            self.reviewer,self.mid,self.eid,self.oid,
+            'needs_further_review','Independent second human requests further review')
+        verdict=self.client.private_research_dossier(self.eid)
+        self.assertEqual(verdict['total_reviews'],1)
+        self.assertEqual(verdict['reviews'][0]['decision'],'needs_further_review')
+        self.assertNotIn('reviewer_id',verdict['reviews'][0])
+        other=LocalOperatorController(self.core,self.outside)
+        with self.assertRaises(Invalid):
+            other.private_research_dossier(self.eid)
+
+    def test_private_dossier_rejects_corrupt_observation_and_second_review(self):
+        self.select()
+        self.core.db.execute(
+            'UPDATE source_observation SET note=? WHERE observation_id=?',
+            ('TAMPERED HUMAN NOTE',self.oid))
+        with self.assertRaises(EvidenceInvalid):
+            self.client.private_research_dossier(self.eid)
+
+    def test_private_action_detail_identifies_exact_task_and_review(self):
+        self.select()
+        task=self.client.private_action_detail('task',0)
+        review=self.client.private_action_detail('review',0)
+        self.assertIn('SECRET PRIVATE TASK',task['text'])
+        self.assertEqual(review['title'],'SECRET RESEARCH TITLE')
+        self.assertIn('Manual observation',review['note'])
+        self.assertNotIn('actor_id',review)
+        self.assertNotIn('task_id',task)
+        self.assertNotIn('observation_id',review)
+        viewer=LocalOperatorController(self.core,self.viewer)
+        viewer.list_matters()
+        viewer.select(0)
+        with self.assertRaises((Denied,Invalid)):
+            viewer.private_action_detail('task',0)
+
+    def test_private_action_detail_fails_closed_on_stale_or_corrupt_records(self):
+        self.select()
+        self.core.db.execute('UPDATE tasks SET text=? WHERE id=?',
+                             ('UPDATED PRIVATE TASK',self.task['id']))
+        self.assertEqual(self.client.private_action_detail('task',0)['text'],
+                         'UPDATED PRIVATE TASK')
+        self.core.db.execute('UPDATE tasks SET version=version+1 WHERE id=?',
+                             (self.task['id'],))
+        with self.assertRaises(Stale):
+            self.client.private_action_detail('task',0)
+        self.client.list_matters()
+        self.client.select(0)
+        self.core.db.execute(
+            'UPDATE source_observation SET note=? WHERE observation_id=?',
+            ('TAMPERED NOTE',self.oid))
+        with self.assertRaises(EvidenceInvalid):
+            self.client.private_action_detail('review',0)
+
     def test_explicit_matter_and_task_creation_and_reopen(self):
         fence = LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3')
         client = LocalOperatorController(self.core,self.author,durable_fence=fence)

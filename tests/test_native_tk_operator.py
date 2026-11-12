@@ -85,6 +85,47 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.buttons['Select matter'].invoke()
         self.root.update()
 
+    def test_00_rec08_restored_pilot_native_close_reopen_fresh_credentials(self):
+        # Native recovered database lifecycle: new tokens, two real windows.
+        from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
+        from src.fictional_pilot_backup import backup_fictional_pilot, restore_fictional_pilot
+        from src.secure_engine import Denied
+        original = Path(self.tmp.name) / 'rec08-source.sqlite3'
+        archive = Path(self.tmp.name) / 'rec08-fictional-backup.json'
+        restored = Path(self.tmp.name) / 'rec08-restored.sqlite3'
+        issued = initialize_fictional_pilot(original)
+        backup_fictional_pilot(original, issued['editor_token'], archive)
+        restored_issued = restore_fictional_pilot(archive, restored)
+        fresh = {row['user']: row['token'] for row in restored_issued['accounts']}
+        with self.assertRaises(Denied):
+            open_fictional_pilot(restored, issued['reviewer_token'],
+                                 run_mainloop=False)
+        for attempt in range(2):
+            root, opened = open_fictional_pilot(
+                restored, fresh['Independent Fictional Reviewer'],
+                run_mainloop=False)
+            try:
+                root.update()
+                self.assertIn('Local Operator', root.title())
+                widgets = descendants(root)
+                buttons = {w.cget('text'): w for w in widgets
+                           if isinstance(w, ttk.Button)}
+                buttons['Workload (read only)'].invoke()
+                root.update()
+                fields = [w.get('1.0', 'end-1c') for w in widgets
+                          if isinstance(w, tk.Text)]
+                self.assertTrue(any('Open user-entered tasks: 1' in s
+                                    for s in fields))
+                self.assertTrue(opened.verify_audit())
+            finally:
+                root.destroy()
+                opened.close()
+        reopened = SecureCore(restored)
+        try:
+            self.assertTrue(reopened.verify_audit())
+        finally:
+            reopened.close()
+
     def test_offline_pilot_opens_real_tk_window_after_database_restart(self):
         from src.offline_pilot import initialize_fictional_pilot, open_fictional_pilot
         path=Path(self.tmp.name)/'fresh-pilot.sqlite3'
@@ -233,6 +274,44 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
                             x.get('1.0','end-1c') for x in self.texts))
 
 
+    def test_in_app_fictional_practice_walkthrough_is_private_and_read_only(self):
+        self.open(self.author)
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        help_entries=[i for i in range(menu.index('end')+1)
+                      if menu.entrycget(i,'label')=='Help']
+        self.assertEqual(len(help_entries),1)
+        help_menu=self.root.nametowidget(
+            menu.entrycget(help_entries[0],'menu'))
+        self.assertEqual(help_menu.entrycget(0,'label'),
+                         'Fictional practice walkthrough')
+        before=self.core.db.execute('SELECT count(*) FROM audit').fetchone()[0]
+        help_menu.invoke(0)
+        self.root.update()
+        windows=[w for w in self.root.winfo_children()
+                 if isinstance(w,tk.Toplevel)]
+        self.assertEqual(len(windows),1)
+        window=windows[0]
+        self.assertEqual(window.title(),'Fictional practice walkthrough')
+        content=next(w for w in descendants(window) if isinstance(w,tk.Text))
+        text=content.get('1.0','end-1c')
+        self.assertIn('Workload (read only)',text)
+        self.assertIn('Record manual observation',text)
+        self.assertIn('Completed tasks (read only)',text)
+        self.assertIn('Never share access codes',text)
+        self.assertNotIn('SECRET PRIVATE TASK',text)
+        self.assertNotIn('SECRET SOURCE',text)
+        self.assertNotIn(self.author,text)
+        self.assertEqual(str(content.cget('state')),'disabled')
+        self.assertEqual(
+            self.core.db.execute('SELECT count(*) FROM audit').fetchone()[0],
+            before)
+        close=next(w for w in descendants(window)
+                   if isinstance(w,ttk.Button) and
+                   w.cget('text')=='Close walkthrough')
+        close.invoke()
+        self.root.update()
+        self.assertFalse(window.winfo_exists())
+
     def test_research_menu_has_explicit_manual_source_and_observation(self):
         self.open(self.author)
         menu=self.root.nametowidget(self.root.cget('menu'))
@@ -260,6 +339,234 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertTrue(self.core.verify_audit())
 
 
+
+    def test_private_saved_source_view_clears_on_hide_and_revocation(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        self.assertEqual(research.entrycget(2,'label'),
+                         'View saved source (read only)')
+        research.invoke(2)
+        self.root.update()
+        forms=[x for x in self.root.winfo_children() if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(forms),1)
+        dialog=forms[0]
+        self.assertIn('read only',dialog.title())
+        private=[x for x in descendants(dialog) if isinstance(x,tk.Text)]
+        self.assertEqual(len(private),1)
+        self.assertIn('SECRET EXCERPT',private[0].get('1.0','end-1c'))
+        self.assertIn('NOT authenticated legal authority or independent custody',
+                      private[0].get('1.0','end-1c'))
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.evidence_add'"
+        ).fetchone()[0],1)
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_private_saved_source_view_revocation_clears_content(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        research.invoke(2)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        self.assertTrue(dialog.winfo_exists())
+        self.core.revoke_token(self.reviewer)
+        self.root.privacy_check()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_native_private_dossier_displays_history_and_second_human_decision(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        research.invoke(2)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        detail=next(x for x in descendants(dialog) if isinstance(x,tk.Text))
+        displayed=detail.get('1.0','end-1c')
+        self.assertIn('Manual observation history',displayed)
+        self.assertIn('Manually checked fictitious authority',displayed)
+        self.assertIn('No second-human decision recorded',displayed)
+        self.assertNotIn('SECRET CAPTURE',displayed)
+        self.assertNotIn(self.reviewer,displayed)
+        self.assertNotIn(self.author,displayed)
+        self.assertNotIn('PRIVATE FICTITIOUS CASE',displayed)
+        self.assertEqual(displayed.count('\n')>4,True)
+        self.assertTrue(self.core.verify_audit())
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_native_completed_task_history_after_real_completion(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        with patch.object(messagebox,'askyesno',return_value=True):
+            self.buttons['Complete task'].invoke()
+        self.root.update()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        self.assertEqual(inspect.entrycget(3,'label'),
+                         'Completed tasks (read only)')
+        inspect.invoke(3)
+        self.root.update()
+        dialog=next(w for w in self.root.winfo_children()
+                    if isinstance(w,tk.Toplevel))
+        detail=next(w for w in descendants(dialog) if isinstance(w,tk.Text))
+        self.assertIn('SECRET PRIVATE TASK',detail.get('1.0','end-1c'))
+        self.assertIn('external custody NOT verified',
+                      detail.get('1.0','end-1c'))
+        self.assertEqual(self.listboxes[2].size(),0)
+        self.assertTrue(self.core.verify_audit())
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_native_completed_history_pages_and_private_purge(self):
+        for i in range(21):
+            task=self.core.create_task(
+                self.author,self.mid,'PRIVATE PAGE ITEM '+str(i).zfill(2),
+                '2026-11-10T00:00:00Z')
+            self.core.complete_task(self.author,task['id'],1,
+                                    expected_matter_id=self.mid)
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        inspect.invoke(3)
+        self.root.update()
+        dialog=next(w for w in self.root.winfo_children()
+                    if isinstance(w,tk.Toplevel))
+        detail=next(w for w in descendants(dialog) if isinstance(w,tk.Text))
+        buttons={w.cget('text'):w for w in descendants(dialog)
+                 if isinstance(w,ttk.Button)}
+        first_title=self.core.db.execute(
+            'SELECT text FROM tasks WHERE matter_id=? AND completed=1 '
+            'ORDER BY due_at,id LIMIT 1',(self.mid,)).fetchone()['text']
+        last_title=self.core.db.execute(
+            'SELECT text FROM tasks WHERE matter_id=? AND completed=1 '
+            'ORDER BY due_at,id LIMIT 1 OFFSET 20',(self.mid,)).fetchone()['text']
+        self.assertIn('Page 1 of 2',detail.get('1.0','end-1c'))
+        self.assertIn(first_title,detail.get('1.0','end-1c'))
+        self.assertEqual(str(buttons['Previous page'].cget('state')),'disabled')
+        buttons['Next page'].invoke()
+        self.root.update()
+        self.assertIn('Page 2 of 2',detail.get('1.0','end-1c'))
+        self.assertIn(last_title,detail.get('1.0','end-1c'))
+        self.assertNotIn(first_title,detail.get('1.0','end-1c'))
+        self.assertEqual(str(buttons['Next page'].cget('state')),'disabled')
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_native_completed_history_revocation_purges_private_view(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        inspect.invoke(3)
+        self.root.update()
+        dialog=next(w for w in self.root.winfo_children()
+                    if isinstance(w,tk.Toplevel))
+        self.core.revoke_token(self.reviewer)
+        self.root.privacy_check()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_private_matter_preview_before_selection_and_hide_purges(self):
+        self.open(self.reviewer)
+        self.listboxes[0].selection_set(0)
+        self.listboxes[0].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        self.assertEqual(menu.entrycget(3,'label'),'Inspect')
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        self.assertEqual(inspect.entrycget(0,'label'),
+                         'Selected matter (read only)')
+        inspect.invoke(0)
+        self.root.update()
+        dialogs=[x for x in self.root.winfo_children()
+                 if isinstance(x,tk.Toplevel)]
+        self.assertEqual(len(dialogs),1)
+        dialog=dialogs[0]
+        text=next(x for x in descendants(dialog) if isinstance(x,tk.Text))
+        self.assertIn('PRIVATE FICTITIOUS CASE',text.get('1.0','end-1c'))
+        self.assertNotIn('PRIVATE FICTITIOUS CASE',
+                         self.listboxes[0].get(0))
+        self.root.event_generate('<Unmap>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertTrue(self.core.verify_audit())
+
+    def test_private_matter_preview_revocation_hides(self):
+        self.open(self.reviewer)
+        self.listboxes[0].selection_set(0)
+        self.listboxes[0].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        inspect.invoke(0)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        self.core.revoke_token(self.reviewer)
+        self.root.privacy_check()
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+
+    def test_private_selected_action_details_and_confirmations_show_real_work(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        self.listboxes[2].selection_set(0)
+        self.listboxes[2].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        inspect=self.root.nametowidget(menu.entrycget(3,'menu'))
+        self.assertEqual(menu.entrycget(3,'label'),'Inspect')
+        inspect.invoke(1)
+        self.root.update()
+        dialog=next(w for w in self.root.winfo_children()
+                    if isinstance(w,tk.Toplevel))
+        details=next(w for w in descendants(dialog) if isinstance(w,tk.Text))
+        self.assertIn('SECRET PRIVATE TASK',details.get('1.0','end-1c'))
+        # Close the private read-only dialog without invalidating the active
+        # matter; the separate hide test proves full privacy invalidation.
+        dialog.destroy()
+        self.root.update()
+        with patch.object(messagebox,'askyesno',return_value=False) as confirm:
+            self.buttons['Complete task'].invoke()
+        self.assertEqual(confirm.call_count,1)
+        self.assertIn('SECRET PRIVATE TASK',confirm.call_args.args[1])
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='task.complete'"
+        ).fetchone()[0],0)
+
+    def test_private_review_confirmation_shows_observation_and_does_not_write_on_cancel(self):
+        self.open(self.reviewer)
+        self.select_matter()
+        self.listboxes[1].selection_set(0)
+        self.listboxes[1].event_generate('<<ListboxSelect>>')
+        self.root.update()
+        note=next(w for w in self.texts if w.cget('height')==2)
+        note.insert('1.0','Fictional reviewer note long enough')
+        with patch.object(messagebox,'askyesno',return_value=False) as confirm:
+            self.buttons['Record review'].invoke()
+        self.assertEqual(confirm.call_count,1)
+        self.assertIn('SECRET SOURCE',confirm.call_args.args[1])
+        self.assertIn('Manually checked fictitious authority',
+                      confirm.call_args.args[1])
+        self.assertEqual(self.core.db.execute(
+            "SELECT count(*) FROM audit_chain WHERE action='research.second_source_review'"
+        ).fetchone()[0],0)
 
     def test_real_multiline_research_source_and_observation_save(self):
         self.open(self.author)
@@ -329,6 +636,45 @@ class NativeTkOperatorAcceptance(unittest.TestCase):
         self.assertTrue(self.core.verify_audit())
         from src.durable_local_write_fence import LocalWriteFence
         self.assertFalse(LocalWriteFence(Path(self.tmp.name)/'fictional.sqlite3').is_pending())
+
+    def test_native_correct_latest_observation_preserves_history(self):
+        from src.research_correction import ResearchCorrection
+        from src.source_release_projection import SourceReleaseProjection
+        self.open(self.author)
+        self.select_matter()
+        eid=self.core.db.execute('SELECT id FROM research_evidence '
+                                 'WHERE matter_id=?',(self.mid,)).fetchone()['id']
+        original=self.core.db.execute('SELECT observation_id FROM source_observation '
+                                      'WHERE evidence_id=?',(eid,)).fetchone()[0]
+        menu=self.root.nametowidget(self.root.cget('menu'))
+        research=self.root.nametowidget(menu.entrycget(1,'menu'))
+        self.assertEqual(research.entrycget(3,'label'),'Correct latest observation')
+        research.invoke(3)
+        self.root.update()
+        dialog=next(x for x in self.root.winfo_children()
+                    if isinstance(x,tk.Toplevel))
+        self.assertEqual(dialog.title(),'Correct latest observation')
+        fields=[x for x in descendants(dialog) if isinstance(x,tk.Text)]
+        self.assertEqual(len(fields),3)
+        fields[0].insert('1.0','Corrected fictional observation')
+        fields[1].insert('1.0','Fictional corrected review note')
+        fields[2].insert('1.0','Original observation contained a fictional error')
+        with patch.object(messagebox,'askyesno',return_value=True):
+            save=next(x for x in descendants(dialog)
+                      if isinstance(x,ttk.Button)
+                      and x.cget('text')=='Save correction')
+            save.invoke()
+            self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        self.assertEqual(self.core.db.execute(
+            'SELECT count(*) FROM source_observation WHERE evidence_id=?',
+            (eid,)).fetchone()[0],2)
+        self.assertEqual(ResearchCorrection(self.core).history(
+            self.author,self.mid,eid)['corrections'][0]['old_id'],original)
+        self.assertEqual(SourceReleaseProjection(self.core).project(
+            self.author,self.mid)['sources'][0]['procedural_status'],
+            'needs_independent_second_review')
+        self.assertTrue(self.core.verify_audit())
 
     def test_unsubmitted_multiline_research_draft_purged_on_hide(self):
         self.open(self.author)
