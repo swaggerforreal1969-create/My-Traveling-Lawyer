@@ -39,7 +39,9 @@ jobs:
           python-version: '3.11'
       - name: Verify deterministic preflight before expensive runner
         shell: bash
-        run: python -m unittest discover -s tests -p test_diesel_ci_preflight.py -v
+        run: |
+          python -m unittest discover -s tests -p test_diesel_ci_preflight.py -v
+          python -m unittest discover -s tests -p test_repository_workflow_guard.py -v
       - name: Assess exact SHA, scoped changed files, restricted source, and customer queue
         id: plan
         shell: bash

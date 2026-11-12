@@ -11,7 +11,7 @@ WINDOWS_INPUTS = ("tools/windows_fictional_gui.py", "tools/build_signed_windows.
                   "src/offline_pilot.py", "src/fictional_pilot_backup.py",
                   "tools/windows_native_backup_restore_acceptance.py")
 INFRA_PREFIXES = ("docs/", ".github/workflows/")
-INFRA_EXACT = ("tools/diesel_ci_preflight.py", "tests/test_diesel_ci_preflight.py")
+INFRA_EXACT = ("tools/diesel_ci_preflight.py", "tests/test_diesel_ci_preflight.py", "tests/test_repository_workflow_guard.py")
 REQUIRED_HTTP = ("src/secure_server.py", "tests/test_secure_http.py")
 
 def get_plan(paths, *, http_source_present, queue):
