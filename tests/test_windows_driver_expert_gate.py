@@ -33,7 +33,8 @@ class FrozenDriverExpertGate(unittest.TestCase):
         self.assertIn('Desktop(backend="win32").windows()', source)
         self.assertIn('handle=candidate.handle', source)
         self.assertIn("def file_picker(", source)
-        self.assertIn("dlg = file_picker()", source)
+        self.assertIn("def choose_file(title, path):", source)
+        self.assertIn("candidate.window_text() == title", source)
         function = next(n for n in ast.parse(source).body
                         if isinstance(n, ast.FunctionDef) and n.name == "choose_file")
         function_source = ast.get_source_segment(source, function)
