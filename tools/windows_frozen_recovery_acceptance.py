@@ -146,6 +146,34 @@ def choose_file(title, path):
     return dlg
 
 
+def submit_owner_code(code, timeout=15):
+    # Run 43439194977 observed two TkTopLevel windows. The owner dialog
+    # measures 237x125 and has exactly two native buttons; the main window
+    # measures 456x449 and has six. The Tk Entry is NOT a Win32 Edit.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for dlg in Desktop(backend="win32").windows():
+            try:
+                if (dlg.process_id() != _ACTIVE_PID or not dlg.is_visible()
+                        or dlg.class_name() != "TkTopLevel"):
+                    continue
+                rect = dlg.rectangle()
+                buttons = [c for c in dlg.descendants()
+                           if c.class_name() == "Button"]
+                if (rect.width() < 300 and rect.height() < 220
+                        and len(buttons) == 2):
+                    dlg.set_focus()
+                    # tkinter.simpledialog explicitly focuses the hidden
+                    # Entry before wait_window. No clipboard or logging.
+                    send_keys(code, with_spaces=True, pause=0.002)
+                    send_keys("{ENTER}")
+                    return
+            except Exception:
+                continue
+        time.sleep(.2)
+    raise AssertionError("OWNER_AUTH_TK_DIALOG_UNRESOLVED")
+
+
 def acknowledge(title):
     dlg = window(title)
     click(dlg, "OK")
@@ -223,13 +251,7 @@ def main():
                           ",".join(str(cid) for kind, cid in item["children"]), flush=True)
                 print("FROZEN_OWNER_DIAG_ONLY=VERIFIED", flush=True)
                 return
-            prompt = window(TITLE)
-            # Tk simpledialog has a live hidden Entry; no code in test output.
-            entries = [x for x in prompt.descendants(control_type="Edit") if x.is_visible()]
-            if not entries:
-                raise AssertionError("OWNER_AUTH_DIALOG_MISSING")
-            entries[-1].set_edit_text(owner)
-            click(prompt, "OK")
+            submit_owner_code(owner)
             wait_file(backup)
             raw = backup.read_bytes()
             assert owner.encode() not in raw and reviewer.encode() not in raw

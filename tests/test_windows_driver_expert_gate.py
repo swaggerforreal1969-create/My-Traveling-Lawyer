@@ -40,6 +40,15 @@ class FrozenDriverExpertGate(unittest.TestCase):
         function_source = ast.get_source_segment(source, function)
         self.assertNotIn("dlg = window(title)", function_source)
 
+    def test_owner_input_uses_observed_native_tk_dialog_not_edit_tree(self):
+        source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
+        self.assertIn("def submit_owner_code(code, timeout=15):", source)
+        self.assertIn('dlg.class_name() != "TkTopLevel"', source)
+        self.assertIn("len(buttons) == 2", source)
+        self.assertIn("send_keys(code, with_spaces=True", source)
+        self.assertIn("submit_owner_code(owner)", source)
+        self.assertNotIn('raise AssertionError("OWNER_AUTH_DIALOG_MISSING")', source)
+
     def test_owner_probe_does_not_read_or_print_credentials(self):
         source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
         section = source.split('if os.getenv("MTL_DIAG_OWNER_ONLY") == "1":')[1].split("            prompt = window(TITLE)")[0]
