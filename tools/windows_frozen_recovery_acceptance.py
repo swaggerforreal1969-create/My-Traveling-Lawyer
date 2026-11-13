@@ -4,6 +4,7 @@ Only fictional records and temporary local files. No tokens or archives logged.
 No application monkeypatching: the subprocess executes the PyInstaller binary.
 """
 import hashlib
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,16 @@ from src.offline_pilot import initialize_fictional_pilot
 from src.secure_engine import SecureCore, Denied
 
 TITLE = "My Traveling Lawyer"
+
+
+@contextmanager
+def core_session(path):
+    core = SecureCore(path)
+    try:
+        yield core
+    finally:
+        core.close()
+
 EXE = Path("dist/MyTravelingLawyer-Practice/MyTravelingLawyer-Practice.exe").resolve()
 
 
@@ -80,7 +91,7 @@ def main():
         accounts = initialize_fictional_pilot(source)
         owner = accounts["editor_token"]
         reviewer = accounts["reviewer_token"]
-        with SecureCore(source) as core:
+        with core_session(source) as core:
             matter = core.create_matter(owner, "Extra invented matter")
             core.create_task(owner, matter["id"], "Invented task", "2031-02-01T00:00:00Z")
             expected = {}
@@ -125,7 +136,7 @@ def main():
             print("FROZEN_EXE_RESTORE_BUTTON=VERIFIED")
 
             # Readback is separate from the frozen EXE: verify what it actually wrote.
-            with SecureCore(restored) as core:
+            with core_session(restored) as core:
                 assert core.verify_audit()
                 for table, rows in expected.items():
                     assert [tuple(v) for v in core.db.execute(
@@ -171,7 +182,7 @@ def main():
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 window(TITLE, 30)
-                with SecureCore(restored) as core:
+                with core_session(restored) as core:
                     assert core.verify_audit()
                     for table, rows in expected.items():
                         assert [tuple(v) for v in core.db.execute(
