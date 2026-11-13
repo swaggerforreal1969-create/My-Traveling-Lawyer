@@ -115,8 +115,11 @@ jobs:
           path: frozen-dialog-diagnostic.json
           retention-days: 3
           if-no-files-found: warn
-      # Full black-box test is intentionally paused until its file-picker
-      # identity is established. No false customer acceptance.
+      - name: Exact-SHA full frozen recovery, only after documented file-dialog diagnosis
+        shell: pwsh
+        run: |
+          python -m tools.windows_frozen_recovery_acceptance
+          if ($LASTEXITCODE -ne 0) { throw "FROZEN_EXE_RECOVERY_UNRESOLVED" }
       - name: Verify exact-source package and native window, no signing claims
         shell: pwsh
         run: |

@@ -27,6 +27,13 @@ class FrozenDriverExpertGate(unittest.TestCase):
                              n.func.attr == "child_window"
                              for n in ast.walk(tree)))
 
+    def test_frozen_picker_is_class_based_not_label_assumption(self):
+        source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
+        self.assertIn('w.element_info.class_name == "#32770"', source)
+        self.assertIn("def file_picker(", source)
+        self.assertIn("dlg = file_picker()", source)
+        self.assertNotIn("dlg = window(title)", source)
+
     def test_dialog_probe_has_finite_single_process_and_scrubbed_report(self):
         source = (ROOT / "tools/windows_dialog_probe.py").read_text(encoding="utf-8")
         tree = ast.parse(source)

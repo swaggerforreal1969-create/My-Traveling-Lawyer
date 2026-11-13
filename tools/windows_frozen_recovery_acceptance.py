@@ -31,17 +31,46 @@ def core_session(path):
 EXE = Path("dist/MyTravelingLawyer-Practice/MyTravelingLawyer-Practice.exe").resolve()
 
 
+_ACTIVE_PID = None
+
+
 def window(title, timeout=20):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            for w in Desktop(backend="uia").windows():
-                if title.lower() in (w.window_text() or "").lower() and w.is_visible():
+            owned = [w for w in Desktop(backend="uia").windows()
+                     if w.is_visible() and
+                     (_ACTIVE_PID is None or w.process_id() == _ACTIVE_PID)]
+            # Native Tk common dialogs and message boxes reuse the application
+            # title. Prefer the active native dialog over the main window.
+            if title == TITLE:
+                dialogs = [w for w in owned
+                           if w.element_info.class_name == "#32770"]
+                if dialogs:
+                    return dialogs[-1]
+            for w in owned:
+                if title.lower() in (w.window_text() or "").lower():
                     return w
         except Exception:
             pass
         time.sleep(.3)
     raise AssertionError("FROZEN_UI_WINDOW_MISSING: " + title)
+
+
+def file_picker(timeout=20):
+    # Exact Windows evidence from run 43337782076:
+    # native class #32770; window title is the app title, NOT the action.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for w in Desktop(backend="uia").windows():
+            try:
+                if (w.is_visible() and w.process_id() == _ACTIVE_PID and
+                        w.element_info.class_name == "#32770"):
+                    return w
+            except Exception:
+                continue
+        time.sleep(.3)
+    raise AssertionError("FROZEN_NATIVE_FILE_PICKER_NOT_FOUND")
 
 
 def click(w, title):
@@ -71,7 +100,7 @@ def click(w, title):
 
 
 def choose_file(title, path):
-    dlg = window(title)
+    dlg = file_picker()
     edits = dlg.descendants(control_type="Edit")
     if not edits:
         raise AssertionError("FILE_DIALOG_EDIT_MISSING: " + title)
@@ -101,6 +130,7 @@ def wait_file(path, timeout=15):
 
 
 def main():
+    global _ACTIVE_PID
     if not EXE.is_file():
         raise AssertionError("FROZEN_EXE_MISSING")
     with tempfile.TemporaryDirectory(prefix="mtl-frozen-") as td:
@@ -122,6 +152,7 @@ def main():
         proc = subprocess.Popen([str(EXE)], cwd=str(EXE.parent),
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
+            _ACTIVE_PID = proc.pid
             app = window(TITLE, 30)
             click(app, "Back Up Practice Case")
             choose_file("Choose practice case to back up", source)
