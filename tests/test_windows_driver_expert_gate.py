@@ -56,7 +56,8 @@ class FrozenDriverExpertGate(unittest.TestCase):
     def test_full_driver_uses_verified_native_backup_and_filename_controls(self):
         source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
         self.assertIn("sorted(native, key=lambda b: b.rectangle().top)", source)
-        self.assertIn('c.class_name() == "Edit" and c.control_id() == 1148', source)
+        self.assertIn('filename_id = 1001 if title.startswith("Save ") else 1148', source)
+        self.assertIn('c.class_name() == "Edit" and c.control_id() == filename_id', source)
         self.assertIn('c.class_name() == "Button" and c.control_id() == 1', source)
         self.assertIn("candidate.window_text() == title", source)
 
