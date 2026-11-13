@@ -69,6 +69,13 @@ jobs:
         run: |
           python -m tools.windows_native_backup_restore_acceptance
           if ($LASTEXITCODE -ne 0) { throw "ACTUAL_RECOVERY_DENIED" }
+      - name: Verify actual Windows customer help, backup, restore and startup contracts
+        shell: pwsh
+        run: |
+          foreach ($suite in @("test_windows_practice_help.py", "test_windows_backup_ui.py", "test_windows_restore_ui.py", "test_windows_build_candidate.py")) {
+            python -m unittest discover -s tests -p $suite -v
+            if ($LASTEXITCODE -ne 0) { throw "WINDOWS_CUSTOMER_CONTRACT_DENIED:$suite" }
+          }
       - name: Build frozen EXE once after native acceptance
         shell: pwsh
         run: |

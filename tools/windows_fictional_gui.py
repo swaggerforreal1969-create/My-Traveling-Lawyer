@@ -155,7 +155,12 @@ def show_practice_help(root):
         "4. Only use made-up information. Never enter real client details.\n"
         "5. The second reviewer's code belongs to another authorized person.\n"
         "6. If you see an uncertain result, stop. Do not repeat the action.\n"
-        "7. Select Close when finished.",
+        "7. Select Back Up Practice Case to save a fictional case. Use the owner code.\\n"
+        "8. Backups are NOT encrypted. Store the backup file privately.\\n"
+        "9. Select Restore Practice Backup to restore into a NEW, unused file.\\n"
+        "10. Save the NEW access codes. Old codes will not open the restored case.\\n"
+        "11. Never overwrite an existing case or retry an uncertain restore.\\n"
+        "12. Select Close when finished.",
         parent=root)
 
 def main():

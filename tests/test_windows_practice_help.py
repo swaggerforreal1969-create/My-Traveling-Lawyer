@@ -17,6 +17,10 @@ class PracticeHelpAcceptance(unittest.TestCase):
                            "second reviewer","uncertain result","Close"):
                 self.assertIn(phrase.lower(),text.lower())
             self.assertIn("Never enter real client details",text)
+            for phrase in ("Back Up Practice Case", "Restore Practice Backup",
+                           "NOT encrypted", "owner code", "NEW, unused file",
+                           "Old codes", "Never overwrite"):
+                self.assertIn(phrase.lower(), text.lower())
 
     def test_existing_main_controls_preserved(self):
         from pathlib import Path
