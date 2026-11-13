@@ -39,6 +39,7 @@ def diagnose():
               "exact_sha": __import__("os").environ.get("GITHUB_SHA", ""),
               "probe": "UNRESOLVED", "before": [], "after": [],
               "new_dialogs": [], "native_controls": [], "uia_controls": [],
+              "startup_buttons": [], "selected_button": None,
               "note": "No customer acceptance asserted"}
     try:
         deadline = time.monotonic() + 20
@@ -58,13 +59,35 @@ def diagnose():
             result["probe"] = "DENIED_MAIN_WINDOW_MISSING"
             return
         result["before"] = visible_windows(proc.pid)
-        controls = [c for c in main.descendants() if c.class_name() == "Button"]
-        # The six unnamed Tk buttons were independently observed on run 43336349270.
-        if len(controls) != 6:
+        controls = [c for c in main.descendants()
+                    if c.class_name() == "Button" and c.is_visible()]
+        # Stable evidence: location, parent HWND, native class and control ID,
+        # never the private content or inaccessible Tk widget text.
+        geometry = []
+        for child in controls:
+            rect = child.rectangle()
+            geometry.append({"handle": int(child.handle),
+                             "parent": int(child.parent().handle),
+                             "control_id": int(child.control_id()),
+                             "class": child.class_name(),
+                             "x": int(rect.left), "y": int(rect.top),
+                             "width": int(rect.width()),
+                             "height": int(rect.height())})
+        result["startup_buttons"] = geometry
+        if len(controls) != 6 or len({g["y"] for g in geometry}) != 6:
             result["probe"] = "UNRESOLVED_BUTTON_TOPOLOGY"
             result["button_count"] = len(controls)
             return
-        controls[3].click_input()
+        ordered = sorted(controls, key=lambda c: c.rectangle().top)
+        # GUI source defines vertical button order; confirm through physical
+        # layout rather than unrelated Win32 enumeration order.
+        selected = ordered[3]
+        result["selected_button"] = {
+            "selection": "fourth-by-screen-y",
+            "handle": int(selected.handle),
+            "control_id": int(selected.control_id()),
+            "observed_y": int(selected.rectangle().top)}
+        selected.click_input()
         time.sleep(2)
         result["after"] = visible_windows(proc.pid)
         previous = {w["handle"] for w in result["before"]}
@@ -107,6 +130,8 @@ def diagnose():
         print("FROZEN_DIALOG_PROBE=" + result["probe"], flush=True)
         for w in result["new_dialogs"]:
             print("FROZEN_NEW_WINDOW_CLASS=" + w["class"] + " TITLE=" + w["title"], flush=True)
+        print("FROZEN_STARTUP_BUTTON_Y=" + ",".join(str(b["y"]) for b in result["startup_buttons"]), flush=True)
+        print("FROZEN_SELECTED_BUTTON=" + str(result["selected_button"]["selection"] if result["selected_button"] else "NONE"), flush=True)
         print("FROZEN_NATIVE_CONTROL_CLASSES=" + ",".join(c["class"] for c in result["native_controls"]), flush=True)
         print("FROZEN_NATIVE_CONTROL_IDS=" + ",".join(str(c["control_id"]) for c in result["native_controls"]), flush=True)
 

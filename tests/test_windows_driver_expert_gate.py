@@ -39,6 +39,13 @@ class FrozenDriverExpertGate(unittest.TestCase):
         function_source = ast.get_source_segment(source, function)
         self.assertNotIn("dlg = window(title)", function_source)
 
+    def test_backup_selection_must_use_geometry_not_native_index(self):
+        source = (ROOT / "tools/windows_dialog_probe.py").read_text(encoding="utf-8")
+        self.assertIn("ordered = sorted(controls", source)
+        self.assertIn("ordered[3]", source)
+        self.assertIn('result["startup_buttons"]', source)
+        self.assertNotIn("controls[3].click_input()", source)
+
     def test_dialog_diagnostic_never_exports_editable_values(self):
         source = (ROOT / "tools/windows_dialog_probe.py").read_text(encoding="utf-8")
         self.assertIn('result["native_controls"]', source)
