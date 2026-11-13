@@ -34,22 +34,31 @@ EXE = Path("dist/MyTravelingLawyer-Practice/MyTravelingLawyer-Practice.exe").res
 _ACTIVE_PID = None
 
 
+def native_dialog():
+    # Independently observed #32770 is a WIN32 class, not a UIA class.
+    for candidate in Desktop(backend="win32").windows():
+        try:
+            if (candidate.is_visible() and candidate.process_id() == _ACTIVE_PID
+                    and candidate.class_name() == "#32770"):
+                return Desktop(backend="uia").window(
+                    handle=candidate.handle).wrapper_object()
+        except Exception:
+            continue
+    return None
+
+
 def window(title, timeout=20):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if title == TITLE:
+            dialog = native_dialog()
+            if dialog is not None:
+                return dialog
         try:
-            owned = [w for w in Desktop(backend="uia").windows()
-                     if w.is_visible() and
-                     (_ACTIVE_PID is None or w.process_id() == _ACTIVE_PID)]
-            # Native Tk common dialogs and message boxes reuse the application
-            # title. Prefer the active native dialog over the main window.
-            if title == TITLE:
-                dialogs = [w for w in owned
-                           if w.element_info.class_name == "#32770"]
-                if dialogs:
-                    return dialogs[-1]
-            for w in owned:
-                if title.lower() in (w.window_text() or "").lower():
+            for w in Desktop(backend="uia").windows():
+                if (w.is_visible() and
+                        (_ACTIVE_PID is None or w.process_id() == _ACTIVE_PID)
+                        and title.lower() in (w.window_text() or "").lower()):
                     return w
         except Exception:
             pass
@@ -58,17 +67,12 @@ def window(title, timeout=20):
 
 
 def file_picker(timeout=20):
-    # Exact Windows evidence from run 43337782076:
-    # native class #32770; window title is the app title, NOT the action.
+    # Run 43337782076: native #32770 file dialog titled with APP title.
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        for w in Desktop(backend="uia").windows():
-            try:
-                if (w.is_visible() and w.process_id() == _ACTIVE_PID and
-                        w.element_info.class_name == "#32770"):
-                    return w
-            except Exception:
-                continue
+        picker = native_dialog()
+        if picker is not None:
+            return picker
         time.sleep(.3)
     raise AssertionError("FROZEN_NATIVE_FILE_PICKER_NOT_FOUND")
 

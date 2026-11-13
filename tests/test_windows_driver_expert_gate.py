@@ -29,7 +29,9 @@ class FrozenDriverExpertGate(unittest.TestCase):
 
     def test_frozen_picker_is_class_based_not_label_assumption(self):
         source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
-        self.assertIn('w.element_info.class_name == "#32770"', source)
+        self.assertIn('candidate.class_name() == "#32770"', source)
+        self.assertIn('Desktop(backend="win32").windows()', source)
+        self.assertIn('handle=candidate.handle', source)
         self.assertIn("def file_picker(", source)
         self.assertIn("dlg = file_picker()", source)
         function = next(n for n in ast.parse(source).body
