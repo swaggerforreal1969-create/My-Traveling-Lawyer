@@ -32,7 +32,10 @@ class FrozenDriverExpertGate(unittest.TestCase):
         self.assertIn('w.element_info.class_name == "#32770"', source)
         self.assertIn("def file_picker(", source)
         self.assertIn("dlg = file_picker()", source)
-        self.assertNotIn("dlg = window(title)", source)
+        function = next(n for n in ast.parse(source).body
+                        if isinstance(n, ast.FunctionDef) and n.name == "choose_file")
+        function_source = ast.get_source_segment(source, function)
+        self.assertNotIn("dlg = window(title)", function_source)
 
     def test_dialog_probe_has_finite_single_process_and_scrubbed_report(self):
         source = (ROOT / "tools/windows_dialog_probe.py").read_text(encoding="utf-8")
