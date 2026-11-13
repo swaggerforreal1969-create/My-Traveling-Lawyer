@@ -45,9 +45,12 @@ def window(title, timeout=20):
 
 
 def click(w, title):
-    button = w.child_window(title=title, control_type="Button")
-    button.wait("visible enabled", timeout=15)
-    button.click_input()
+    # Desktop.windows returns a UIAWrapper, not a WindowSpecification.
+    buttons = [b for b in w.descendants(control_type="Button")
+               if b.window_text() == title and b.is_visible()]
+    if not buttons:
+        raise AssertionError("FROZEN_BUTTON_NOT_FOUND: " + title)
+    buttons[0].click_input()
 
 
 def choose_file(title, path):
