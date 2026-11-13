@@ -174,6 +174,28 @@ def submit_owner_code(code, timeout=15):
     raise AssertionError("OWNER_AUTH_TK_DIALOG_UNRESOLVED")
 
 
+def confirm_native_yes(timeout=15):
+    # tkinter.messagebox.askyesno uses Windows MessageBox:
+    # IDYES 6 and IDNO 7. Select by native HWND, not main title.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for dlg in Desktop(backend="win32").windows():
+            try:
+                if (dlg.process_id() != _ACTIVE_PID or not dlg.is_visible()
+                        or dlg.class_name() != "#32770"):
+                    continue
+                buttons = [b for b in dlg.descendants() if b.class_name() == "Button"]
+                yes = [b for b in buttons if b.control_id() == 6]
+                no = [b for b in buttons if b.control_id() == 7]
+                if len(yes) == 1 and len(no) == 1:
+                    yes[0].click_input()
+                    return
+            except Exception:
+                continue
+        time.sleep(.2)
+    raise AssertionError("FROZEN_RESTORE_YES_NO_DIALOG_UNRESOLVED")
+
+
 def acknowledge(title):
     dlg = window(title)
     click(dlg, "OK")
@@ -263,9 +285,24 @@ def main():
             click(app, "Restore Practice Backup")
             choose_file("Choose practice backup to restore", backup)
             choose_file("Save restored practice case as", restored)
-            confirm = window(TITLE)
-            click(confirm, "Yes")
+            confirm_native_yes()
             wait_file(restored)
+            if os.getenv("MTL_DIAG_RESTORE_ONLY") == "1":
+                with core_session(restored) as core:
+                    assert core.verify_audit()
+                    for table, rows in expected.items():
+                        assert [tuple(v) for v in core.db.execute(
+                            "SELECT * FROM " + table + " ORDER BY rowid")] == rows
+                    for token in (owner, reviewer):
+                        try:
+                            core._identity(token)
+                        except Denied:
+                            pass
+                        else:
+                            raise AssertionError("RESTORED_OLD_CODE_ACCEPTED")
+                print("FROZEN_RESTORED_RECORDS_AUDIT_OLD_CODE_DENIAL=VERIFIED",
+                      flush=True)
+                return
             codes = window("Save NEW restored practice access codes")
             edits = codes.descendants(control_type="Edit")
             new_tokens = [e.window_text() for e in edits if e.window_text()]

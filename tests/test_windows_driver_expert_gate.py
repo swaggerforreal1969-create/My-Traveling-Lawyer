@@ -40,6 +40,15 @@ class FrozenDriverExpertGate(unittest.TestCase):
         function_source = ast.get_source_segment(source, function)
         self.assertNotIn("dlg = window(title)", function_source)
 
+    def test_restore_confirmation_denies_wrong_main_window(self):
+        source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
+        self.assertIn("def confirm_native_yes(timeout=15):", source)
+        self.assertIn("b.control_id() == 6", source)
+        self.assertIn("b.control_id() == 7", source)
+        self.assertIn("confirm_native_yes()", source)
+        self.assertIn("MTL_DIAG_RESTORE_ONLY", source)
+        self.assertNotIn('click(confirm, "Yes")', source)
+
     def test_owner_input_uses_observed_native_tk_dialog_not_edit_tree(self):
         source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
         self.assertIn("def submit_owner_code(code, timeout=15):", source)

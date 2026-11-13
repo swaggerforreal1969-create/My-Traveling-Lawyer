@@ -115,11 +115,13 @@ jobs:
           path: frozen-dialog-diagnostic.json
           retention-days: 3
           if-no-files-found: warn
-      - name: One bounded full frozen recovery through native Tk owner input
+      - name: Bounded native Yes confirmation and restored-file readback only
         shell: pwsh
+        env:
+          MTL_DIAG_RESTORE_ONLY: '1'
         run: |
           python -m tools.windows_frozen_recovery_acceptance
-          if ($LASTEXITCODE -ne 0) { throw "FROZEN_RECOVERY_ACCEPTANCE_UNRESOLVED" }
+          if ($LASTEXITCODE -ne 0) { throw "FROZEN_RESTORE_READBACK_UNRESOLVED" }
       - name: Verify exact-source package and native window, no signing claims
         shell: pwsh
         run: |
