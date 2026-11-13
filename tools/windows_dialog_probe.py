@@ -38,7 +38,8 @@ def diagnose():
     result = {"schema": "mtl.frozen.dialog.probe.v1",
               "exact_sha": __import__("os").environ.get("GITHUB_SHA", ""),
               "probe": "UNRESOLVED", "before": [], "after": [],
-              "new_dialogs": [], "note": "No customer acceptance asserted"}
+              "new_dialogs": [], "native_controls": [], "uia_controls": [],
+              "note": "No customer acceptance asserted"}
     try:
         deadline = time.monotonic() + 20
         main = None
