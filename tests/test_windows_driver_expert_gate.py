@@ -39,6 +39,14 @@ class FrozenDriverExpertGate(unittest.TestCase):
         function_source = ast.get_source_segment(source, function)
         self.assertNotIn("dlg = window(title)", function_source)
 
+    def test_dialog_diagnostic_never_exports_editable_values(self):
+        source = (ROOT / "tools/windows_dialog_probe.py").read_text(encoding="utf-8")
+        self.assertIn('result["native_controls"]', source)
+        self.assertIn('result["uia_controls"]', source)
+        self.assertIn('safe_label = label if label in', source)
+        self.assertNotIn("get_value(", source)
+        self.assertNotIn("get_edit_text(", source)
+
     def test_dialog_probe_has_finite_single_process_and_scrubbed_report(self):
         source = (ROOT / "tools/windows_dialog_probe.py").read_text(encoding="utf-8")
         tree = ast.parse(source)

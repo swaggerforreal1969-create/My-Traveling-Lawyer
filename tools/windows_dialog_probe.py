@@ -69,6 +69,31 @@ def diagnose():
         previous = {w["handle"] for w in result["before"]}
         result["new_dialogs"] = [w for w in result["after"] if w["handle"] not in previous]
         result["probe"] = "DIALOG_DISCOVERED" if result["new_dialogs"] else "UNRESOLVED_NO_NEW_TOP_LEVEL_WINDOW"
+        # Only inventory class/control ID and bounded, allowlisted generic labels.
+        # Do not read file paths, editable values or credential fields.
+        result["native_controls"] = []
+        result["uia_controls"] = []
+        for d in Desktop(backend="win32").windows():
+            try:
+                if d.process_id() != proc.pid or not d.is_visible() or d.class_name() != "#32770":
+                    continue
+                for child in d.descendants()[:60]:
+                    kind = child.class_name()
+                    cid = child.control_id()
+                    label = child.window_text()
+                    safe_label = label if label in ("File name:", "File name", "Open", "Save", "Cancel", "Files of type:", "All files (*.*)") else ""
+                    result["native_controls"].append({"class": kind[:50], "control_id": cid, "safe_label": safe_label})
+                uia = Desktop(backend="uia").window(handle=d.handle).wrapper_object()
+                for child in uia.descendants()[:60]:
+                    kind = child.element_info.control_type
+                    result["uia_controls"].append({"type": kind[:50],
+                                                    "class": child.element_info.class_name[:50]})
+                break
+            except Exception:
+                result["probe"] = "UNRESOLVED_NATIVE_CHILD_INSPECTION"
+                break
+        if not result["native_controls"]:
+            result["probe"] = "UNRESOLVED_NO_NATIVE_CHILD_CONTROLS"
     finally:
         if proc.poll() is None:
             proc.terminate()
@@ -81,6 +106,8 @@ def diagnose():
         print("FROZEN_DIALOG_PROBE=" + result["probe"], flush=True)
         for w in result["new_dialogs"]:
             print("FROZEN_NEW_WINDOW_CLASS=" + w["class"] + " TITLE=" + w["title"], flush=True)
+        print("FROZEN_NATIVE_CONTROL_CLASSES=" + ",".join(c["class"] for c in result["native_controls"]), flush=True)
+        print("FROZEN_NATIVE_CONTROL_IDS=" + ",".join(str(c["control_id"]) for c in result["native_controls"]), flush=True)
 
 
 if __name__ == "__main__":
