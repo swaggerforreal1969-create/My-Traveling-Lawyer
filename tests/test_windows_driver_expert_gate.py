@@ -40,6 +40,15 @@ class FrozenDriverExpertGate(unittest.TestCase):
         function_source = ast.get_source_segment(source, function)
         self.assertNotIn("dlg = window(title)", function_source)
 
+    def test_owner_probe_does_not_read_or_print_credentials(self):
+        source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
+        section = source.split('if os.getenv("MTL_DIAG_OWNER_ONLY") == "1":')[1].split("            prompt = window(TITLE)")[0]
+        self.assertIn("FROZEN_OWNER_DIAG_ONLY=VERIFIED", section)
+        self.assertNotIn("window_text(", section)
+        self.assertNotIn("get_value(", section)
+        self.assertNotIn("get_edit_text(", section)
+        self.assertNotIn("owner", section.split("top = []",1)[1].split("FROZEN_OWNER_DIAG_ONLY")[0].replace("FROZEN_OWNER_", ""))
+
     def test_distinct_open_and_save_filename_controls(self):
         source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
         self.assertIn('filename_id = 1001 if title.startswith("Save ") else 1148', source)

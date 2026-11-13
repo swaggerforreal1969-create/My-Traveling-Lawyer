@@ -191,6 +191,38 @@ def main():
             if os.getenv("MTL_DIAG_SAVE_ONLY") == "1":
                 print("FROZEN_SAVE_DIAGNOSTIC_ONLY=VERIFIED", flush=True)
                 return
+            if os.getenv("MTL_DIAG_OWNER_ONLY") == "1":
+                # Observe class and geometry only. NEVER touch Entry text,
+                # accessibility values, tokens or sensitive dialog labels.
+                time.sleep(1)
+                top = []
+                for candidate in Desktop(backend="win32").windows():
+                    try:
+                        if not candidate.is_visible() or candidate.process_id() != proc.pid:
+                            continue
+                        rect = candidate.rectangle()
+                        children = candidate.descendants()[:40]
+                        top.append({
+                            "class": candidate.class_name(),
+                            "width": rect.width(), "height": rect.height(),
+                            "children": [(c.class_name(), c.control_id()) for c in children]})
+                    except Exception:
+                        continue
+                if len(top) < 2:
+                    raise AssertionError("OWNER_AUTH_TOPLEVEL_NOT_OBSERVED")
+                # Only controlled class names, IDs and sizes are printed.
+                print("FROZEN_OWNER_TOPLEVEL_CLASSES=" +
+                      ",".join(x["class"] for x in top), flush=True)
+                for item in top:
+                    print("FROZEN_OWNER_WINDOW_GEOMETRY=" +
+                          item["class"] + ":" + str(item["width"]) +
+                          "x" + str(item["height"]), flush=True)
+                    print("FROZEN_OWNER_CHILD_CLASSES=" +
+                          ",".join(kind for kind, cid in item["children"]), flush=True)
+                    print("FROZEN_OWNER_CHILD_IDS=" +
+                          ",".join(str(cid) for kind, cid in item["children"]), flush=True)
+                print("FROZEN_OWNER_DIAG_ONLY=VERIFIED", flush=True)
+                return
             prompt = window(TITLE)
             # Tk simpledialog has a live hidden Entry; no code in test output.
             entries = [x for x in prompt.descendants(control_type="Edit") if x.is_visible()]
