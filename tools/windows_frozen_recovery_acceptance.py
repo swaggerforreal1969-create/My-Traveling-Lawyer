@@ -90,6 +90,11 @@ def click(w, title):
     startup = ("Create Practice Case", "Open Practice Case", "Practice Help",
                "Back Up Practice Case", "Restore Practice Backup", "Close")
     if len(native) == 6 and title in startup:
+        # Verified in GitHub Actions 43437002166: the backup control is
+        # fourth by increasing screen Y, not fourth in enumeration order.
+        native = sorted(native, key=lambda b: b.rectangle().top)
+        if len({b.rectangle().top for b in native}) != 6:
+            raise AssertionError("FROZEN_STARTUP_BUTTON_GEOMETRY_AMBIGUOUS")
         native[startup.index(title)].click_input()
         return
     # Tk modal buttons can also be unnamed. Require exact count and action.
@@ -104,18 +109,34 @@ def click(w, title):
 
 
 def choose_file(title, path):
-    dlg = file_picker()
-    edits = dlg.descendants(control_type="Edit")
-    if not edits:
-        raise AssertionError("FILE_DIALOG_EDIT_MISSING: " + title)
-    edit = edits[-1]
-    edit.set_focus()
-    edit.set_edit_text(str(path))
-    # This is the actual Windows common-file dialog, owned by the EXE.
-    try:
-        click(dlg, "Save" if "Save" in title else "Open")
-    except Exception:
-        send_keys("{ENTER}")
+    # The real backup picker was observed with exact title and native
+    # Edit control ID 1148, action button ID 1 on run 43437002166.
+    deadline = time.monotonic() + 15
+    dlg = None
+    while time.monotonic() < deadline:
+        for candidate in Desktop(backend="win32").windows():
+            try:
+                if (candidate.process_id() == _ACTIVE_PID and candidate.is_visible()
+                        and candidate.class_name() == "#32770"
+                        and candidate.window_text() == title):
+                    dlg = candidate
+                    break
+            except Exception:
+                continue
+        if dlg is not None:
+            break
+        time.sleep(.25)
+    if dlg is None:
+        raise AssertionError("FROZEN_EXACT_FILE_PICKER_NOT_FOUND: " + title)
+    edits = [c for c in dlg.descendants()
+             if c.class_name() == "Edit" and c.control_id() == 1148]
+    actions = [c for c in dlg.descendants()
+               if c.class_name() == "Button" and c.control_id() == 1]
+    if len(edits) != 1 or len(actions) != 1:
+        raise AssertionError("FROZEN_FILE_PICKER_CONTROL_TOPOLOGY_DENIED")
+    # Never print path or edited value. All paths refer to temp fictional data.
+    edits[0].set_edit_text(str(path))
+    actions[0].click_input()
     return dlg
 
 

@@ -115,8 +115,11 @@ jobs:
           path: frozen-dialog-diagnostic.json
           retention-days: 3
           if-no-files-found: warn
-      # Deferred until the inventory identifies an independently supported
-      # filename-entry control. Diagnostic-only run: do not overclaim acceptance.
+      - name: Full frozen recovery using verified native controls (one bounded run)
+        shell: pwsh
+        run: |
+          python -m tools.windows_frozen_recovery_acceptance
+          if ($LASTEXITCODE -ne 0) { throw "FROZEN_EXE_RECOVERY_UNRESOLVED" }
       - name: Verify exact-source package and native window, no signing claims
         shell: pwsh
         run: |

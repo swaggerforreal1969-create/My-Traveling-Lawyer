@@ -39,6 +39,13 @@ class FrozenDriverExpertGate(unittest.TestCase):
         function_source = ast.get_source_segment(source, function)
         self.assertNotIn("dlg = window(title)", function_source)
 
+    def test_full_driver_uses_verified_native_backup_and_filename_controls(self):
+        source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
+        self.assertIn("sorted(native, key=lambda b: b.rectangle().top)", source)
+        self.assertIn('c.class_name() == "Edit" and c.control_id() == 1148', source)
+        self.assertIn('c.class_name() == "Button" and c.control_id() == 1', source)
+        self.assertIn("candidate.window_text() == title", source)
+
     def test_backup_selection_must_use_geometry_not_native_index(self):
         source = (ROOT / "tools/windows_dialog_probe.py").read_text(encoding="utf-8")
         self.assertIn("ordered = sorted(controls", source)
