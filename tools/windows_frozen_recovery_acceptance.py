@@ -49,6 +49,16 @@ def click(w, title):
     buttons = [b for b in w.descendants(control_type="Button")
                if b.window_text() == title and b.is_visible()]
     if not buttons:
+        # Tk often paints widgets without exposing them as Windows UIA buttons.
+        # Diagnostic is permitted ONLY before entering any practice access code.
+        if title == "Back Up Practice Case":
+            uia = [(c.element_info.control_type, c.element_info.class_name,
+                    c.window_text()[:70]) for c in w.descendants()[:25]]
+            native = Desktop(backend="win32").window(handle=w.handle)
+            win32 = [(c.class_name(), c.window_text()[:70])
+                     for c in native.descendants()[:25]]
+            print("FROZEN_PUBLIC_STARTUP_CONTROL_TREE=", repr(uia), repr(win32),
+                  flush=True)
         raise AssertionError("FROZEN_BUTTON_NOT_FOUND: " + title)
     buttons[0].click_input()
 
