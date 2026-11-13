@@ -83,6 +83,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "BUILD_TOOL_DENIED" }
           ./tools/build_signed_windows.ps1 -BuildOnly
           if ($LASTEXITCODE -ne 0) { throw "FROZEN_BUILD_DENIED" }
+      - name: Black-box frozen EXE recovery buttons and cold restart
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pywinauto==0.6.9
+          if ($LASTEXITCODE -ne 0) { throw "WINDOWS_UI_DRIVER_INSTALL_DENIED" }
+          python -m tools.windows_frozen_recovery_acceptance
+          if ($LASTEXITCODE -ne 0) { throw "FROZEN_EXE_RECOVERY_DENIED" }
       - name: Verify exact-source package and native window, no signing claims
         shell: pwsh
         run: |

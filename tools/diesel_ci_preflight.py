@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = "b25fc1df65acd55e03ee77b193187e81d70bd21d"
 WINDOWS_INPUTS = ("tools/windows_fictional_gui.py", "tools/build_signed_windows.ps1",
                   "src/offline_pilot.py", "src/fictional_pilot_backup.py",
-                  "tools/windows_native_backup_restore_acceptance.py")
+                  "tools/windows_native_backup_restore_acceptance.py",
+                  "tools/windows_frozen_recovery_acceptance.py")
 INFRA_PREFIXES = ("docs/", ".github/workflows/")
 INFRA_EXACT = ("tools/diesel_ci_preflight.py", "tests/test_diesel_ci_preflight.py")
 REQUIRED_HTTP = ("src/secure_server.py", "tests/test_secure_http.py")
