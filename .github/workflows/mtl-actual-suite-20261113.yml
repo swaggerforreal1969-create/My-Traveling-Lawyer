@@ -1,0 +1,40 @@
+name: Traveling Lawyer actual repository regression (isolated)
+on:
+  push:
+    branches:
+      - engineering/mtl-actual-suite-20261113
+permissions:
+  contents: read
+jobs:
+  source-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify repository Python code compiles
+        run: python -m compileall -q src tests tools
+      - name: Run actual Traveling Lawyer test directory and retain output
+        shell: bash
+        run: |
+          mkdir -p regression-evidence
+          set -o pipefail
+          python -m unittest discover -s tests -v 2>&1 | tee regression-evidence/unittest.log
+      - name: Record exact source and test scope
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p regression-evidence
+          printf 'sha=%s\nrun_id=%s\nsuite=tests/\npython=3.11\nsource_changes=none\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > regression-evidence/provenance.txt
+      - name: Retain test evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: traveling-lawyer-actual-suite
+          path: regression-evidence/
+          if-no-files-found: error
+          retention-days: 7
