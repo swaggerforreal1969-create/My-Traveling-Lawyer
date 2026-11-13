@@ -133,6 +133,15 @@ def choose_file(title, path):
     actions = [c for c in dlg.descendants()
                if c.class_name() == "Button" and c.control_id() == 1]
     if len(edits) != 1 or len(actions) != 1:
+        if os.getenv("MTL_DIAG_SAVE_ONLY") == "1" and title == "Save practice backup as":
+            # Only class names and control IDs; no paths, values or credentials.
+            found = [(c.class_name(), c.control_id()) for c in dlg.descendants()[:50]]
+            print("FROZEN_SAVE_DIALOG_CONTROL_CLASSES=" +
+                  ",".join(kind for kind, cid in found), flush=True)
+            print("FROZEN_SAVE_DIALOG_CONTROL_IDS=" +
+                  ",".join(str(cid) for kind, cid in found), flush=True)
+            print("FROZEN_SAVE_DIALOG_TOPOLOGY=UNRESOLVED", flush=True)
+            return None
         raise AssertionError("FROZEN_FILE_PICKER_CONTROL_TOPOLOGY_DENIED")
     # Never print path or edited value. All paths refer to temp fictional data.
     edits[0].set_edit_text(str(path))
@@ -182,6 +191,9 @@ def main():
             click(app, "Back Up Practice Case")
             choose_file("Choose practice case to back up", source)
             choose_file("Save practice backup as", backup)
+            if os.getenv("MTL_DIAG_SAVE_ONLY") == "1":
+                print("FROZEN_SAVE_DIAGNOSTIC_ONLY=VERIFIED", flush=True)
+                return
             prompt = window(TITLE)
             # Tk simpledialog has a live hidden Entry; no code in test output.
             entries = [x for x in prompt.descendants(control_type="Edit") if x.is_visible()]
