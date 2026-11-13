@@ -45,22 +45,29 @@ def window(title, timeout=20):
 
 
 def click(w, title):
-    # Desktop.windows returns a UIAWrapper, not a WindowSpecification.
     buttons = [b for b in w.descendants(control_type="Button")
                if b.window_text() == title and b.is_visible()]
-    if not buttons:
-        # Tk often paints widgets without exposing them as Windows UIA buttons.
-        # Diagnostic is permitted ONLY before entering any practice access code.
-        if title == "Back Up Practice Case":
-            uia = [(c.element_info.control_type, c.element_info.class_name,
-                    c.window_text()[:70]) for c in w.descendants()[:25]]
-            native = Desktop(backend="win32").window(handle=w.handle)
-            win32 = [(c.class_name(), c.window_text()[:70])
-                     for c in native.descendants()[:25]]
-            print("FROZEN_PUBLIC_STARTUP_CONTROL_TREE=", repr(uia), repr(win32),
-                  flush=True)
-        raise AssertionError("FROZEN_BUTTON_NOT_FOUND: " + title)
-    buttons[0].click_input()
+    if buttons:
+        buttons[0].click_input()
+        return
+    # Exact observed frozen Tk control tree (public startup only): six native
+    # Button HWNDs, all unnamed, ordered like the six defined Tk buttons.
+    native = [b for b in w.descendants(control_type="Button")
+              if b.element_info.class_name == "Button" and b.is_visible()]
+    startup = ("Create Practice Case", "Open Practice Case", "Practice Help",
+               "Back Up Practice Case", "Restore Practice Backup", "Close")
+    if len(native) == 6 and title in startup:
+        native[startup.index(title)].click_input()
+        return
+    # Tk modal buttons can also be unnamed. Require exact count and action.
+    if len(native) == 2 and title in ("OK", "Cancel"):
+        native[0 if title == "OK" else 1].click_input()
+        return
+    if len(native) == 1 and title == "I saved the NEW codes":
+        native[0].click_input()
+        return
+    raise AssertionError("FROZEN_BUTTON_UNRESOLVED: " + title +
+                         " native_count=" + str(len(native)))
 
 
 def choose_file(title, path):
