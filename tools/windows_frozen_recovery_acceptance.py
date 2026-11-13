@@ -302,6 +302,40 @@ def main():
                             raise AssertionError("RESTORED_OLD_CODE_ACCEPTED")
                 print("FROZEN_RESTORED_RECORDS_AUDIT_OLD_CODE_DENIAL=VERIFIED",
                       flush=True)
+                # Independent fresh EXE process, with no source app monkeypatch.
+                # Test only process startup and durable readback. The once-only
+                # new codes remain private and are NOT inspected.
+                fresh = subprocess.Popen([str(EXE)], cwd=str(EXE.parent),
+                                         stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL)
+                try:
+                    deadline = time.monotonic() + 20
+                    started = False
+                    while time.monotonic() < deadline:
+                        for candidate in Desktop(backend="win32").windows():
+                            try:
+                                if (candidate.process_id() == fresh.pid
+                                        and candidate.is_visible()
+                                        and candidate.class_name() == "TkTopLevel"):
+                                    started = True
+                                    break
+                            except Exception:
+                                continue
+                        if started:
+                            break
+                        time.sleep(.3)
+                    if not started or fresh.poll() is not None:
+                        raise AssertionError("FROZEN_SECOND_PROCESS_STARTUP_DENIED")
+                    with core_session(restored) as fresh_core:
+                        assert fresh_core.verify_audit()
+                        for table, rows in expected.items():
+                            assert [tuple(v) for v in fresh_core.db.execute(
+                                "SELECT * FROM " + table + " ORDER BY rowid")] == rows
+                    print("FROZEN_SECOND_PROCESS_DURABLE_READBACK=VERIFIED", flush=True)
+                finally:
+                    if fresh.poll() is None:
+                        fresh.kill()
+                    fresh.wait(timeout=10)
                 return
             codes = window("Save NEW restored practice access codes")
             edits = codes.descendants(control_type="Edit")

@@ -115,7 +115,7 @@ jobs:
           path: frozen-dialog-diagnostic.json
           retention-days: 3
           if-no-files-found: warn
-      - name: Bounded native Yes confirmation and restored-file readback only
+      - name: Bounded frozen backup restore and fresh-process durable readback
         shell: pwsh
         env:
           MTL_DIAG_RESTORE_ONLY: '1'

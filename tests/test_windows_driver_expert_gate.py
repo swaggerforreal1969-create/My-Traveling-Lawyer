@@ -40,6 +40,19 @@ class FrozenDriverExpertGate(unittest.TestCase):
         function_source = ast.get_source_segment(source, function)
         self.assertNotIn("dlg = window(title)", function_source)
 
+    def test_frozen_second_process_readback_has_bounded_lifetime(self):
+        source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
+        scoped = source.split('if os.getenv("MTL_DIAG_RESTORE_ONLY") == "1":')[1].split('            codes = window(', 1)[0]
+        self.assertIn("fresh = subprocess.Popen([str(EXE)]", scoped)
+        self.assertIn("candidate.process_id() == fresh.pid", scoped)
+        self.assertIn("with core_session(restored) as fresh_core:", scoped)
+        self.assertIn("fresh_core.verify_audit()", scoped)
+        self.assertIn("FROZEN_SECOND_PROCESS_DURABLE_READBACK=VERIFIED", scoped)
+        self.assertIn("fresh.kill()", scoped)
+        self.assertIn("fresh.wait(timeout=10)", scoped)
+        self.assertNotIn("new_tokens", scoped)
+        self.assertNotIn("window_text()", scoped)
+
     def test_restore_confirmation_denies_wrong_main_window(self):
         source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
         self.assertIn("def confirm_native_yes(timeout=15):", source)
