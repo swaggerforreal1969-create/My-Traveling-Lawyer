@@ -115,13 +115,11 @@ jobs:
           path: frozen-dialog-diagnostic.json
           retention-days: 3
           if-no-files-found: warn
-      - name: Inspect frozen save-dialog control topology (no backup write)
+      - name: One bounded full frozen backup restore and restart acceptance
         shell: pwsh
-        env:
-          MTL_DIAG_SAVE_ONLY: '1'
         run: |
           python -m tools.windows_frozen_recovery_acceptance
-          if ($LASTEXITCODE -ne 0) { throw "FROZEN_SAVE_DIALOG_DIAGNOSTIC_DENIED" }
+          if ($LASTEXITCODE -ne 0) { throw "FROZEN_RECOVERY_ACCEPTANCE_UNRESOLVED" }
       - name: Verify exact-source package and native window, no signing claims
         shell: pwsh
         run: |

@@ -128,22 +128,19 @@ def choose_file(title, path):
         time.sleep(.25)
     if dlg is None:
         raise AssertionError("FROZEN_EXACT_FILE_PICKER_NOT_FOUND: " + title)
+    # Run 43437002166: Open picker filename Edit ID 1148.
+    # Run 43437749574: Save picker filename Edit ID 1001 (first;
+    # second matching edit belongs to the search box).
+    filename_id = 1001 if title.startswith("Save ") else 1148
     edits = [c for c in dlg.descendants()
-             if c.class_name() == "Edit" and c.control_id() == 1148]
+             if c.class_name() == "Edit" and c.control_id() == filename_id]
     actions = [c for c in dlg.descendants()
                if c.class_name() == "Button" and c.control_id() == 1]
-    if len(edits) != 1 or len(actions) != 1:
-        if os.getenv("MTL_DIAG_SAVE_ONLY") == "1" and title == "Save practice backup as":
-            # Only class names and control IDs; no paths, values or credentials.
-            found = [(c.class_name(), c.control_id()) for c in dlg.descendants()[:50]]
-            print("FROZEN_SAVE_DIALOG_CONTROL_CLASSES=" +
-                  ",".join(kind for kind, cid in found), flush=True)
-            print("FROZEN_SAVE_DIALOG_CONTROL_IDS=" +
-                  ",".join(str(cid) for kind, cid in found), flush=True)
-            print("FROZEN_SAVE_DIALOG_TOPOLOGY=UNRESOLVED", flush=True)
-            return None
+    if (len(actions) != 1 or (len(edits) < 1 or
+            (filename_id == 1148 and len(edits) != 1))):
         raise AssertionError("FROZEN_FILE_PICKER_CONTROL_TOPOLOGY_DENIED")
-    # Never print path or edited value. All paths refer to temp fictional data.
+    # First ID-1001 field belongs to the save filename ComboBox; the later
+    # ID-1001 field is native search. Never log the fictional filename.
     edits[0].set_edit_text(str(path))
     actions[0].click_input()
     return dlg
