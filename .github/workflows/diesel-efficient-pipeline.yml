@@ -15,6 +15,8 @@ on:
       - src/fictional_pilot_backup.py
       - tools/windows_native_backup_restore_acceptance.py
       - tools/windows_frozen_recovery_acceptance.py
+      - tools/windows_dialog_probe.py
+      - tests/test_windows_driver_expert_gate.py
       - native_windows_tests/**
 permissions:
   contents: read
@@ -53,8 +55,22 @@ jobs:
           path: ${{ runner.temp }}/diesel-efficiency-proof.json
           retention-days: 7
           if-no-files-found: warn
-  windows-on-change-only:
+  expert-driver-triage:
     needs: low-cost-preflight
+    if: needs.low-cost-preflight.outputs.windows_required == 'true' && needs.low-cost-preflight.outputs.source_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Reject known Windows black-box driver defects before building
+        run: python -m unittest discover -s tests -p test_windows_driver_expert_gate.py -v
+  windows-on-change-only:
+    needs: [low-cost-preflight, expert-driver-triage]
     if: needs.low-cost-preflight.outputs.windows_required == 'true' && needs.low-cost-preflight.outputs.source_changed == 'true'
     runs-on: windows-latest
     timeout-minutes: 8
@@ -84,13 +100,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "BUILD_TOOL_DENIED" }
           ./tools/build_signed_windows.ps1 -BuildOnly
           if ($LASTEXITCODE -ne 0) { throw "FROZEN_BUILD_DENIED" }
-      - name: Black-box frozen EXE recovery buttons and cold restart
+      - name: Expert frozen-dialog discovery (bounded, no blind full retry)
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check pywinauto==0.6.9
           if ($LASTEXITCODE -ne 0) { throw "WINDOWS_UI_DRIVER_INSTALL_DENIED" }
-          python -m tools.windows_frozen_recovery_acceptance
-          if ($LASTEXITCODE -ne 0) { throw "FROZEN_EXE_RECOVERY_DENIED" }
+          python -m tools.windows_dialog_probe
+          if ($LASTEXITCODE -ne 0) { throw "WINDOWS_DIALOG_PROBE_FAILED" }
+      - name: Retain sanitized dialog metadata, never access codes or EXE
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frozen-dialog-diagnostic-only
+          path: frozen-dialog-diagnostic.json
+          retention-days: 3
+          if-no-files-found: warn
+      # Full black-box test is intentionally paused until its file-picker
+      # identity is established. No false customer acceptance.
       - name: Verify exact-source package and native window, no signing claims
         shell: pwsh
         run: |

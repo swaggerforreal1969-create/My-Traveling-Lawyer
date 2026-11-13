@@ -13,3 +13,6 @@ No new self-hosted runner or larger billed GitHub runner added: existing GitHub-
 
 ## What success proves
 If Ubuntu CI succeeds with Windows job skipped, the efficiency pipeline correctly avoids a needless native rebuild on infrastructure-only edits. This is proof of orchestration, not proof of reduced spend, higher coding productivity, AI background persistence, release acceptance, or signed customer readiness.
+
+## 2026-11-12 isolated expert-runner and bounded work-scheduler change
+Specialist Linux `expert-driver-triage` job runs after Linux preflight, before the existing conditional hosted Windows worker. Its static tests prevent known driver regressions (invalid SecureCore context management and UIA wrapper calls). GitHub `needs`, scoped path triggers and branch concurrency serve as the dependency scheduler. No cron, unattended retry loops, new paid machines, self-hosted runner, or repository-wide rollout. A single Windows build now runs a bounded frozen dialog discovery probe and retains only class/title/handle metadata for the fictional EXE. The full black-box test remains intentionally paused until actual file picker identification is supported by that evidence. This is *diagnosis*, not frozen recovery acceptance.
