@@ -51,7 +51,7 @@ class FrozenDriverExpertGate(unittest.TestCase):
 
     def test_owner_probe_does_not_read_or_print_credentials(self):
         source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
-        section = source.split('if os.getenv("MTL_DIAG_OWNER_ONLY") == "1":')[1].split("            prompt = window(TITLE)")[0]
+        section = source.split('if os.getenv("MTL_DIAG_OWNER_ONLY") == "1":')[1].split('print("FROZEN_OWNER_DIAG_ONLY=VERIFIED"')[0]
         self.assertIn("FROZEN_OWNER_DIAG_ONLY=VERIFIED", section)
         self.assertNotIn("window_text(", section)
         self.assertNotIn("get_value(", section)
