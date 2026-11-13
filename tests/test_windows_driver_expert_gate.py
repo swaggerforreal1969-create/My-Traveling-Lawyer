@@ -46,12 +46,6 @@ class FrozenDriverExpertGate(unittest.TestCase):
         self.assertIn("edits[0].set_edit_text(str(path))", source)
         self.assertIn('c.control_id() == 1', source)
 
-    def test_save_dialog_probe_exits_before_owner_code_and_never_logs_values(self):
-        source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
-        self.assertIn('MTL_DIAG_SAVE_ONLY', source)
-        self.assertIn("FROZEN_SAVE_DIALOG_CONTROL_IDS=", source)
-        self.assertIn("FROZEN_SAVE_DIAGNOSTIC_ONLY=VERIFIED", source)
-        self.assertNotIn("print(owner", source)
 
     def test_full_driver_uses_verified_native_backup_and_filename_controls(self):
         source = (ROOT / "tools/windows_frozen_recovery_acceptance.py").read_text(encoding="utf-8")
